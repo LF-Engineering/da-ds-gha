@@ -24,3 +24,5 @@
 /xxx
 /gha_map_*.json
 /cncf
+*.yaml
+*.yml
