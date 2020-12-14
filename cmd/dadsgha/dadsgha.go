@@ -53,6 +53,7 @@ var (
 	gHint              int
 	gThrN              int
 	gGHAMap            map[string]map[string]int
+	gGHARepoDates      map[string]time.Time
 	gRichMtx           *sync.Mutex
 	gEnsuredIndicesMtx *sync.Mutex
 	gUploadMtx         *sync.Mutex
@@ -1507,12 +1508,16 @@ func printStatDesc(stat map[string]int) (s string) {
 	return
 }
 
-func getGHAJSONs(ch chan time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]string]*regexp.Regexp, dss map[string]map[string]string, startDates map[string]map[string]time.Time) {
+func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]string]*regexp.Regexp, dss map[string]map[string]string, startDates map[string]map[string]time.Time) (pdt *time.Time) {
 	defer func() {
 		if ch != nil {
-			ch <- dt
+			ch <- pdt
 		}
 	}()
+	// FIXME
+	if 1 == 1 {
+		return
+	}
 	ky := lib.ToGHADate2(dt)
 	repos, ok := gGHAMap[ky]
 	// lib.Printf("%s -> %v(%d)\n", ky, ok, len(repos))
@@ -1661,6 +1666,8 @@ func getGHAJSONs(ch chan time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]st
 		"Parsed: %s: %d JSONs, found %d matching, enriched %d (%s)\n",
 		fn, n, f, r, printStatDesc(stat),
 	)
+	pdt = &dt
+	return
 }
 
 func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, startDates map[string]map[string]time.Time) {
@@ -1806,6 +1813,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 		uploadRichItems(ctx, false)
 	}()
 
+	maxProcessed := gMinGHA
 	dt := dFrom
 	for {
 		currMonthEnd = lib.PrevHourStart(lib.NextMonthStart(dt))
@@ -1815,8 +1823,10 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 		if gGHAMap == nil {
 			lib.Printf("warning, no GHA map file for %s, doing a full scan\n", lib.ToGHADate(dt))
 		}
+		// FIXME
+		updateGHARepoDates(ctx, dt)
 		if gThrN > 1 {
-			ch := make(chan time.Time)
+			ch := make(chan *time.Time)
 			nThreads := 0
 			for dt.Before(dTo) || dt.Equal(dTo) {
 				dateToFunc()
@@ -1824,21 +1834,30 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 				dt = dt.Add(time.Hour)
 				nThreads++
 				if nThreads == gThrN {
-					<-ch
+					pdt := <-ch
 					nThreads--
 					dateToFunc()
+					if pdt != nil && pdt.After(maxProcessed) {
+						maxProcessed = *pdt
+					}
 				}
 			}
 			for nThreads > 0 {
-				<-ch
+				pdt := <-ch
 				nThreads--
 				dateToFunc()
+				if pdt != nil && pdt.After(maxProcessed) {
+					maxProcessed = *pdt
+				}
 			}
 		} else {
 			for dt.Before(dTo) || dt.Equal(dTo) {
 				dateToFunc()
-				getGHAJSONs(nil, ctx, dt, config, dss, startDates)
+				pdt := getGHAJSONs(nil, ctx, dt, config, dss, startDates)
 				dt = dt.Add(time.Hour)
+				if pdt != nil && pdt.After(maxProcessed) {
+					maxProcessed = *pdt
+				}
 			}
 		}
 		dt = lib.NextHourStart(currMonthEnd)
@@ -1846,6 +1865,16 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 			break
 		}
 	}
+	currentConfig := serializeConfig(config)
+	if maxProcessed.After(gMinGHA) {
+		err = saveFixturesState(ctx, currentConfig, maxProcessed)
+		if err != nil {
+			lib.Printf("cannot save sync info: %+v\n", err)
+			return
+		}
+	}
+	// FIXME
+	saveGHARepoDates(ctx)
 }
 
 func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.Time) {
@@ -2127,11 +2156,10 @@ func ensureSyncInfoIndex(ctx *lib.Ctx) (err error) {
 	return
 }
 
-func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string) (err error) {
+func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, tm time.Time) (err error) {
 	idx := "ghasyncinfo"
 	method := "PUT"
 	item := map[string]interface{}{}
-	tm := time.Now()
 	id := tm.UnixNano()
 	sid := fmt.Sprintf("%d", id)
 	item["id"] = id
@@ -2277,13 +2305,6 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		return false
 	}
 	currentConfig := serializeConfig(config)
-	defer func() {
-		err = saveFixturesState(ctx, currentConfig)
-		if err != nil {
-			lib.Printf("cannot save sync info: %+v\n", err)
-			return
-		}
-	}()
 	var (
 		savedConfig map[string]string
 		ok          bool
@@ -2308,6 +2329,7 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		lib.Printf("incorrect current state, skipping: %s\n", prettyPrint(currentConfig))
 		return false
 	}
+	// FIXME: prev or current?
 	syncFrom := lib.PrevHourStart(whenSaved)
 	// If All RE is the same, then the configuration didn't changed since last run
 	if savedAllRE == currentAllRE {
@@ -2324,89 +2346,92 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		}
 		return true
 	}
-	lib.Printf("comparing two states with %d and %d elements\n", len(currentConfig), len(savedConfig))
-	indices := map[string]struct{}{}
-	// return true if we can do incremental sync
-	checkStartDate := func(fSlug, dss string) bool {
-		ids := map[string]struct{}{}
-		suffMap := getIndexSuffixMap(dss)
-		for _, typ := range []string{"pull_request", "issue", "repository"} {
-			suff, ok := suffMap[typ]
-			if ok {
-				ids[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
+	return false
+	/*
+		lib.Printf("comparing two states with %d and %d elements\n", len(currentConfig), len(savedConfig))
+		indices := map[string]struct{}{}
+		// return true if we can do incremental sync
+		checkStartDate := func(fSlug, dss string) bool {
+			ids := map[string]struct{}{}
+			suffMap := getIndexSuffixMap(dss)
+			for _, typ := range []string{"pull_request", "issue", "repository"} {
+				suff, ok := suffMap[typ]
+				if ok {
+					ids[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
+				}
 			}
+			for idx, originStartDates := range startDates {
+				_, ok := ids[idx]
+				if !ok {
+					continue
+				}
+				lib.Printf("%s:\n", idx)
+				for origin, startDate := range originStartDates {
+					lib.Printf("\t%s: %s\n", origin, lib.ToYMDHMSDate(startDate))
+				}
+				delete(ids, idx)
+			}
+			for idx := range ids {
+				lib.Printf("no %s yet\n", idx)
+			}
+			return len(ids) == 0
 		}
-		for idx, originStartDates := range startDates {
-			_, ok := ids[idx]
-			if !ok {
+		missing := false
+		for k, v := range currentConfig {
+			if k == ": " {
 				continue
 			}
-			lib.Printf("%s:\n", idx)
-			for origin, startDate := range originStartDates {
-				lib.Printf("\t%s: %s\n", origin, lib.ToYMDHMSDate(startDate))
-			}
-			delete(ids, idx)
-		}
-		for idx := range ids {
-			lib.Printf("no %s yet\n", idx)
-		}
-		return len(ids) == 0
-	}
-	missing := false
-	for k, v := range currentConfig {
-		if k == ": " {
-			continue
-		}
-		ary := strings.Split(k, ": ")
-		project := ary[0]
-		data := ary[1]
-		ary2 := strings.Split(data, ":")
-		fSlug := ary2[0]
-		savedRE, ok := savedConfig[k]
-		dss := ary2[1]
-		if !ok {
-			lib.Printf("(%s, %s, %s) is new\n", fSlug, project, dss)
-			if !checkStartDate(fSlug, dss) {
-				missing = true
-			}
-			continue
-		}
-		if savedRE != v {
-			lib.Printf("(%s, %s, %s) configuration changed\n", fSlug, project, dss)
-			if !checkStartDate(fSlug, dss) {
-				missing = true
-			}
-			continue
-		}
-		suffMap := getIndexSuffixMap(dss)
-		for _, typ := range []string{"pull_request", "issue", "repository"} {
-			suff, ok := suffMap[typ]
-			if ok {
-				indices[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
-			}
-		}
-	}
-	if len(indices) == 0 {
-		return !missing
-	}
-	lib.Printf("%d indices had the same configuration, so they can be synced from the last run %v\n", len(indices), syncFrom)
-	// indices - the same config
-	for idx, originStartDates := range startDates {
-		_, ok := indices[idx]
-		if !ok {
-			lib.Printf("not updating %s - new or changed\n", idx)
-			continue
-		}
-		for origin, startDate := range originStartDates {
-			if startDate.Before(syncFrom) {
-				if ctx.Debug > 0 {
-					lib.Printf("updating %s/%s start date %v -> %v\n", idx, origin, startDate, syncFrom)
+			ary := strings.Split(k, ": ")
+			project := ary[0]
+			data := ary[1]
+			ary2 := strings.Split(data, ":")
+			fSlug := ary2[0]
+			savedRE, ok := savedConfig[k]
+			dss := ary2[1]
+			if !ok {
+				lib.Printf("(%s, %s, %s) is new\n", fSlug, project, dss)
+				if !checkStartDate(fSlug, dss) {
+					missing = true
 				}
-				startDates[idx][origin] = syncFrom
+				continue
+			}
+			if savedRE != v {
+				lib.Printf("(%s, %s, %s) configuration changed\n", fSlug, project, dss)
+				if !checkStartDate(fSlug, dss) {
+					missing = true
+				}
+				continue
+			}
+			suffMap := getIndexSuffixMap(dss)
+			for _, typ := range []string{"pull_request", "issue", "repository"} {
+				suff, ok := suffMap[typ]
+				if ok {
+					indices[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
+				}
 			}
 		}
-	}
-	return !missing
+		if len(indices) == 0 {
+			return !missing
+		}
+		lib.Printf("%d indices had the same configuration, so they can be synced from the last run %v\n", len(indices), syncFrom)
+		// indices - the same config
+		for idx, originStartDates := range startDates {
+			_, ok := indices[idx]
+			if !ok {
+				lib.Printf("not updating %s - new or changed\n", idx)
+				continue
+			}
+			for origin, startDate := range originStartDates {
+				if startDate.Before(syncFrom) {
+					if ctx.Debug > 0 {
+						lib.Printf("updating %s/%s start date %v -> %v\n", idx, origin, startDate, syncFrom)
+					}
+					startDates[idx][origin] = syncFrom
+				}
+			}
+		}
+		return !missing
+	*/
 }
 
 func previewJSON(ctx *lib.Ctx, jsonStr []byte, dt time.Time, repos map[string]int) {
@@ -2608,6 +2633,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		if save {
 			saveGHAMap(ctx, dFrom)
 		}
+		updateGHARepoDates(ctx, dFrom)
 		dFrom = lib.NextMonthStart(dFrom)
 		if !dFrom.Before(dDtTo) {
 			break
@@ -2696,17 +2722,71 @@ func maxDateGHAMap(ctx *lib.Ctx) *time.Time {
 	return &tm
 }
 
-func handleMT(ctx *lib.Ctx) {
-	gThrN = lib.GetThreadsNum(ctx)
-	if gThrN > 1 {
-		gRichMtx = &sync.Mutex{}
-		gEnsuredIndicesMtx = &sync.Mutex{}
-		gUploadMtx = &sync.Mutex{}
-		dads.SetMT()
+func loadGHARepoDates(ctx *lib.Ctx) {
+	gGHARepoDates = nil
+	path := "gha_map_repo_dates.json"
+	lib.Printf("loading GHA map repo dates %s\n", path)
+	bts, err := ioutil.ReadFile(path)
+	if err != nil {
+		lib.Printf("cannot read GHA map repo dates file %s\n", path)
+		return
 	}
+	gGHARepoDates = make(map[string]time.Time)
+	err = jsoniter.Unmarshal(bts, &gGHARepoDates)
+	if err != nil {
+		lib.Printf("cannot unmarshal from GHA map repo dates file %s, %d bytes\n", path, len(bts))
+		return
+	}
+	lib.Printf("loaded GHA map repo dates %d items\n", len(gGHARepoDates))
+	return
+}
+
+func saveGHARepoDates(ctx *lib.Ctx) {
+	if gGHARepoDates == nil {
+		return
+	}
+	if len(gGHARepoDates) < 1 {
+		return
+	}
+	path := "gha_map_repo_dates.json"
+	bts, err := jsoniter.Marshal(gGHARepoDates)
+	if err != nil {
+		lib.Printf("cannot marshal GHA map repo dates with %d items to file %s\n", len(gGHARepoDates), path)
+		return
+	}
+	err = ioutil.WriteFile(path, bts, 0644)
+	if err != nil {
+		lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
+		return
+	}
+	lib.Printf("saved GHA map repo dates %s %d items\n", path, len(gGHARepoDates))
+	return
+}
+
+func updateGHARepoDates(ctx *lib.Ctx, dt time.Time) {
+	if gGHARepoDates == nil {
+		gGHARepoDates = make(map[string]time.Time)
+	}
+	had := len(gGHARepoDates)
+	for _, repos := range gGHAMap {
+		for repo := range repos {
+			rdt, ok := gGHARepoDates[repo]
+			if ok {
+				if dt.Before(rdt) {
+					gGHARepoDates[repo] = dt
+				}
+				continue
+			}
+			gGHARepoDates[repo] = dt
+		}
+	}
+	have := len(gGHARepoDates)
+	lib.Printf("%v: %d -> %d repo start dates\n", lib.ToGHADate(dt), had, have)
 }
 
 func handleGHAMap(ctx *lib.Ctx) {
+	loadGHARepoDates(ctx)
+	had := len(gGHARepoDates)
 	maxDt := maxDateGHAMap(ctx)
 	if maxDt == nil {
 		_ = generateGHAMap(ctx, nil, true, false, true)
@@ -2722,6 +2802,20 @@ func handleGHAMap(ctx *lib.Ctx) {
 		if nextMonth.Before(time.Now()) {
 			_ = generateGHAMap(ctx, maxDt, true, false, true)
 		}
+	}
+	have := len(gGHARepoDates)
+	if have != had {
+		saveGHARepoDates(ctx)
+	}
+}
+
+func handleMT(ctx *lib.Ctx) {
+	gThrN = lib.GetThreadsNum(ctx)
+	if gThrN > 1 {
+		gRichMtx = &sync.Mutex{}
+		gEnsuredIndicesMtx = &sync.Mutex{}
+		gUploadMtx = &sync.Mutex{}
+		dads.SetMT()
 	}
 }
 
