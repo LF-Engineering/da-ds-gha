@@ -53,7 +53,7 @@ var (
 	gHint              int
 	gThrN              int
 	gGHAMap            map[string]map[string]int
-	gGHARepoDates      map[string]time.Time
+	gGHARepoDates      map[string]map[string]int
 	gRichMtx           *sync.Mutex
 	gEnsuredIndicesMtx *sync.Mutex
 	gUploadMtx         *sync.Mutex
@@ -2731,13 +2731,43 @@ func loadGHARepoDates(ctx *lib.Ctx) {
 		lib.Printf("cannot read GHA map repo dates file %s\n", path)
 		return
 	}
-	gGHARepoDates = make(map[string]time.Time)
-	err = jsoniter.Unmarshal(bts, &gGHARepoDates)
+	gGHARepoDates = make(map[string]map[string]int)
+	//err = jsoniter.Unmarshal(bts, &gGHARepoDates)
+	// FIXME
+	tmp := make(map[string]time.Time)
+	err = jsoniter.Unmarshal(bts, &tmp)
 	if err != nil {
 		lib.Printf("cannot unmarshal from GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	lib.Printf("loaded GHA map repo dates %d items\n", len(gGHARepoDates))
+	for r, dt := range tmp {
+		ary := strings.Split(r, "/")
+		lAry := len(ary)
+		var (
+			org  string
+			repo string
+		)
+		if lAry == 1 {
+			org = ""
+			repo = ary[0]
+		} else if lAry == 2 {
+			org = ary[0]
+			repo = ary[1]
+		} else {
+			org = ary[0]
+			repo = strings.Join(ary[1:], "/")
+		}
+		_, ok := gGHARepoDates[org]
+		if !ok {
+			gGHARepoDates[org] = make(map[string]int)
+		}
+		gGHARepoDates[org][repo] = int(dt.Unix() / int64(3600))
+	}
+	nRepos := 0
+	for _, repos := range gGHARepoDates {
+		nRepos += len(repos)
+	}
+	lib.Printf("loaded GHA map repo dates %d orgs, %d repos\n", len(gGHARepoDates), nRepos)
 	return
 }
 
@@ -2748,10 +2778,14 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	if len(gGHARepoDates) < 1 {
 		return
 	}
+	nRepos := 0
+	for _, repos := range gGHARepoDates {
+		nRepos += len(repos)
+	}
 	path := "gha_map_repo_dates.json"
 	bts, err := jsoniter.Marshal(gGHARepoDates)
 	if err != nil {
-		lib.Printf("cannot marshal GHA map repo dates with %d items to file %s\n", len(gGHARepoDates), path)
+		lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", len(gGHARepoDates), nRepos, path)
 		return
 	}
 	err = ioutil.WriteFile(path, bts, 0644)
@@ -2765,28 +2799,60 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 
 func updateGHARepoDates(ctx *lib.Ctx, dt time.Time) {
 	if gGHARepoDates == nil {
-		gGHARepoDates = make(map[string]time.Time)
+		gGHARepoDates = make(map[string]map[string]int)
 	}
-	had := len(gGHARepoDates)
+	had := 0
+	for _, repos := range gGHARepoDates {
+		had += len(repos)
+	}
+	idt := int(dt.Unix() / int64(3600))
 	for _, repos := range gGHAMap {
-		for repo := range repos {
-			rdt, ok := gGHARepoDates[repo]
+		for r := range repos {
+			ary := strings.Split(r, "/")
+			lAry := len(ary)
+			var (
+				org  string
+				repo string
+			)
+			if lAry == 1 {
+				org = ""
+				repo = ary[0]
+			} else if lAry == 2 {
+				org = ary[0]
+				repo = ary[1]
+			} else {
+				org = ary[0]
+				repo = strings.Join(ary[1:], "/")
+			}
+			orgRepos, ok := gGHARepoDates[org]
+			if !ok {
+				gGHARepoDates[org] = make(map[string]int)
+				gGHARepoDates[org][repo] = idt
+				continue
+			}
+			ridt, ok := orgRepos[repo]
 			if ok {
-				if dt.Before(rdt) {
-					gGHARepoDates[repo] = dt
+				if idt < ridt {
+					gGHARepoDates[org][repo] = idt
 				}
 				continue
 			}
-			gGHARepoDates[repo] = dt
+			gGHARepoDates[org][repo] = idt
 		}
 	}
-	have := len(gGHARepoDates)
+	have := 0
+	for _, repos := range gGHARepoDates {
+		have += len(repos)
+	}
 	lib.Printf("%v: %d -> %d repo start dates\n", lib.ToGHADate(dt), had, have)
 }
 
 func handleGHAMap(ctx *lib.Ctx) {
 	loadGHARepoDates(ctx)
-	had := len(gGHARepoDates)
+	had := 0
+	for _, repos := range gGHARepoDates {
+		had += len(repos)
+	}
 	maxDt := maxDateGHAMap(ctx)
 	if maxDt == nil {
 		_ = generateGHAMap(ctx, nil, true, false, true)
@@ -2803,7 +2869,10 @@ func handleGHAMap(ctx *lib.Ctx) {
 			_ = generateGHAMap(ctx, maxDt, true, false, true)
 		}
 	}
-	have := len(gGHARepoDates)
+	have := 0
+	for _, repos := range gGHARepoDates {
+		have += len(repos)
+	}
 	if have != had {
 		saveGHARepoDates(ctx)
 	}
