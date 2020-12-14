@@ -731,6 +731,7 @@ func prettyPrint(data interface{}) string {
 }
 
 func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
+	// TODO: connect s3 retry mechanism
 	nItems := len(items)
 	lib.Printf("bulk uploading %d documents\n", nItems)
 	url := ctx.ESURL + "/_bulk?refresh=wait_for"
@@ -1514,10 +1515,6 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			ch <- pdt
 		}
 	}()
-	// FIXME
-	if 1 == 1 {
-		return
-	}
 	ky := lib.ToGHADate2(dt)
 	repos, ok := gGHAMap[ky]
 	// lib.Printf("%s -> %v(%d)\n", ky, ok, len(repos))
@@ -1823,8 +1820,6 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 		if gGHAMap == nil {
 			lib.Printf("warning, no GHA map file for %s, doing a full scan\n", lib.ToGHADate(dt))
 		}
-		// FIXME
-		updateGHARepoDates(ctx, dt)
 		if gThrN > 1 {
 			ch := make(chan *time.Time)
 			nThreads := 0
@@ -1873,8 +1868,6 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 			return
 		}
 	}
-	// FIXME
-	saveGHARepoDates(ctx)
 }
 
 func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.Time) {
@@ -2732,37 +2725,38 @@ func loadGHARepoDates(ctx *lib.Ctx) {
 		return
 	}
 	gGHARepoDates = make(map[string]map[string]int)
-	//err = jsoniter.Unmarshal(bts, &gGHARepoDates)
-	// FIXME
-	tmp := make(map[string]time.Time)
-	err = jsoniter.Unmarshal(bts, &tmp)
+	//tmp := make(map[string]time.Time)
+	//err = jsoniter.Unmarshal(bts, &tmp)
+	err = jsoniter.Unmarshal(bts, &gGHARepoDates)
 	if err != nil {
 		lib.Printf("cannot unmarshal from GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	for r, dt := range tmp {
-		ary := strings.Split(r, "/")
-		lAry := len(ary)
-		var (
-			org  string
-			repo string
-		)
-		if lAry == 1 {
-			org = ""
-			repo = ary[0]
-		} else if lAry == 2 {
-			org = ary[0]
-			repo = ary[1]
-		} else {
-			org = ary[0]
-			repo = strings.Join(ary[1:], "/")
+	/*
+		for r, dt := range tmp {
+			ary := strings.Split(r, "/")
+			lAry := len(ary)
+			var (
+				org  string
+				repo string
+			)
+			if lAry == 1 {
+				org = ""
+				repo = ary[0]
+			} else if lAry == 2 {
+				org = ary[0]
+				repo = ary[1]
+			} else {
+				org = ary[0]
+				repo = strings.Join(ary[1:], "/")
+			}
+			_, ok := gGHARepoDates[org]
+			if !ok {
+				gGHARepoDates[org] = make(map[string]int)
+			}
+			gGHARepoDates[org][repo] = int(dt.Unix() / int64(3600))
 		}
-		_, ok := gGHARepoDates[org]
-		if !ok {
-			gGHARepoDates[org] = make(map[string]int)
-		}
-		gGHARepoDates[org][repo] = int(dt.Unix() / int64(3600))
-	}
+	*/
 	nRepos := 0
 	for _, repos := range gGHARepoDates {
 		nRepos += len(repos)
@@ -2793,7 +2787,7 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 		lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	lib.Printf("saved GHA map repo dates %s %d items\n", path, len(gGHARepoDates))
+	lib.Printf("saved GHA map repo dates %s %d orgs, %d items\n", path, len(gGHARepoDates), nRepos)
 	return
 }
 
@@ -2875,6 +2869,8 @@ func handleGHAMap(ctx *lib.Ctx) {
 	}
 	if have != had {
 		saveGHARepoDates(ctx)
+	} else {
+		lib.Printf("no new repo start dates detected\n")
 	}
 }
 
@@ -2897,7 +2893,6 @@ func main() {
 		path = os.Args[1]
 	}
 	handleMT(&ctx)
-	handleGHAMap(&ctx)
 	var (
 		config     map[[2]string]*regexp.Regexp
 		startDates map[string]map[string]time.Time
@@ -2913,6 +2908,11 @@ func main() {
 		startDates = getStartDates(&ctx, config)
 	}
 	incremental := handleIncremental(&ctx, config, startDates)
+	// FIXME: is it enough? like only process GHA map files
+	// and repo start dates when incremental sync is impossible?
+	if !incremental {
+		handleGHAMap(&ctx)
+	}
 	gha(&ctx, incremental, config, startDates)
 	dtEnd := time.Now()
 	lib.Printf("Took: %v\n", dtEnd.Sub(dtStart))
