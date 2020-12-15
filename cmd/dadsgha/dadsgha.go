@@ -1672,6 +1672,9 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 		minFrom = gMinGHA
 		return
 	}
+	defer func() {
+		gGHARepoDates = nil
+	}()
 	minFrom = lib.PrevHourStart(time.Now())
 	types := []string{"pull_request", "issue", "repository"}
 	for key, re := range config {
