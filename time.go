@@ -198,6 +198,18 @@ func TimeParseAny(dtStr string) time.Time {
 	return time.Now()
 }
 
+// ParseGHAString - Parse GHA date in 2020121514 format
+func ParseGHAString(dtStr string) time.Time {
+	t, e := time.Parse("2006010215", dtStr)
+	if e == nil {
+		return t
+	}
+	Printf("Error:\nCannot parse GHA date: '%v'\n", dtStr)
+	fmt.Fprintf(os.Stdout, "Error:\nCannot parse GHA date: '%v'\n", dtStr)
+	os.Exit(1)
+	return time.Now()
+}
+
 // TimeParseES - parse ES time format
 func TimeParseES(dtStr string) (time.Time, error) {
 	dtStr = strings.TrimSpace(strings.Replace(dtStr, "Z", "", -1))

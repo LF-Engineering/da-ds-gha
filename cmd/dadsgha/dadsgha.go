@@ -2591,7 +2591,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 					nThreads--
 					if data.ok {
 						gGHAMap[data.key] = data.repos
-						updateGHARepoDates(ctx, data.dt, data.repos)
+						// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 					}
 				}
 			}
@@ -2600,7 +2600,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				nThreads--
 				if data.ok {
 					gGHAMap[data.key] = data.repos
-					updateGHARepoDates(ctx, data.dt, data.repos)
+					// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 				}
 			}
 		} else {
@@ -2608,7 +2608,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				data := previewGHAJSONs(nil, ctx, dt)
 				if data.ok {
 					gGHAMap[data.key] = data.repos
-					updateGHARepoDates(ctx, data.dt, data.repos)
+					// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 				}
 				dt = dt.Add(time.Hour)
 			}
@@ -2619,7 +2619,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		if save {
 			saveGHAMap(ctx, dFrom)
 		}
-		//updateGHARepoDates(ctx, dFrom)
+		updateGHARepoDatesMonth(ctx)
 		dFrom = lib.NextMonthStart(dFrom)
 		if !dFrom.Before(dDtTo) {
 			break
@@ -2758,13 +2758,70 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	return
 }
 
-func updateGHARepoDates(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
+func updateGHARepoDatesMonth(ctx *lib.Ctx) {
 	if gGHARepoDates == nil {
 		gGHARepoDates = make(map[string]map[string]int)
 	}
 	had := 0
-	for _, repos := range gGHARepoDates {
-		had += len(repos)
+	if ctx.Debug > 0 {
+		for _, repos := range gGHARepoDates {
+			had += len(repos)
+		}
+	}
+	for sdt, repos := range gGHAMap {
+		dt := lib.ParseGHAString(sdt)
+		idt := int(dt.Unix() / int64(3600))
+		for r := range repos {
+			ary := strings.Split(r, "/")
+			lAry := len(ary)
+			var (
+				org  string
+				repo string
+			)
+			if lAry == 1 {
+				org = ""
+				repo = ary[0]
+			} else if lAry == 2 {
+				org = ary[0]
+				repo = ary[1]
+			} else {
+				org = ary[0]
+				repo = strings.Join(ary[1:], "/")
+			}
+			orgRepos, ok := gGHARepoDates[org]
+			if !ok {
+				gGHARepoDates[org] = make(map[string]int)
+				gGHARepoDates[org][repo] = idt
+				continue
+			}
+			ridt, ok := orgRepos[repo]
+			if ok {
+				if idt < ridt {
+					gGHARepoDates[org][repo] = idt
+				}
+				continue
+			}
+			gGHARepoDates[org][repo] = idt
+		}
+	}
+	have := 0
+	if ctx.Debug > 0 {
+		for _, repos := range gGHARepoDates {
+			have += len(repos)
+		}
+		lib.Printf("%d -> %d repo start dates\n", had, have)
+	}
+}
+
+func updateGHARepoDatesHour(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
+	if gGHARepoDates == nil {
+		gGHARepoDates = make(map[string]map[string]int)
+	}
+	had := 0
+	if ctx.Debug > 0 {
+		for _, repos := range gGHARepoDates {
+			had += len(repos)
+		}
 	}
 	idt := int(dt.Unix() / int64(3600))
 	for r := range repos {
@@ -2800,10 +2857,12 @@ func updateGHARepoDates(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
 		gGHARepoDates[org][repo] = idt
 	}
 	have := 0
-	for _, repos := range gGHARepoDates {
-		have += len(repos)
+	if ctx.Debug > 0 {
+		for _, repos := range gGHARepoDates {
+			have += len(repos)
+		}
+		lib.Printf("%v: %d -> %d repo start dates\n", lib.ToGHADate(dt), had, have)
 	}
-	lib.Printf("%v: %d -> %d repo start dates\n", lib.ToGHADate(dt), had, have)
 }
 
 func handleGHAMap(ctx *lib.Ctx) {
