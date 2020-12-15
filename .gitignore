@@ -22,7 +22,7 @@
 /data
 /lf
 /xxx
-/gha_map_*.json
 /cncf
+*.json
 *.yaml
 *.yml
