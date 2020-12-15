@@ -1667,6 +1667,71 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	return
 }
 
+func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, dss map[string]map[string]string, startDates map[string]map[string]time.Time) (minFrom time.Time) {
+	if gGHARepoDates == nil {
+		minFrom = gMinGHA
+		return
+	}
+	types := []string{"pull_request", "issue", "repository"}
+	for key, re := range config {
+		// Do not include all fixtures combined RE
+		if key[0] == "" {
+			continue
+		}
+		gotIndices := false
+		indices := []string{}
+		fSlug := ""
+		for org, orgRepos := range gGHARepoDates {
+			for r, rdt := range orgRepos {
+				var repo string
+				if org == "" {
+					repo = r
+				} else {
+					repo = org + "/" + r
+				}
+				if repoHit(repo, re) {
+					if !gotIndices {
+						ary := strings.Split(key[0], ":")
+						fSlug = ary[0]
+						suffMap := dss[fSlug]
+						for _, typ := range types {
+							suff, ok := suffMap[typ]
+							if ok {
+								idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-" + typ + suff
+								indices = append(indices, idx)
+							}
+						}
+						gotIndices = true
+					}
+					dt := time.Unix(int64(rdt)*int64(3600), 0)
+					lib.Printf("%s check against %v\n", repo, indices)
+					for _, idx := range indices {
+						originStartDates, ok := startDates[idx]
+						if !ok {
+							startDates[idx] = make(map[string]time.Time)
+							startDates[idx][repo] = dt
+							lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
+							continue
+						}
+						startDate, ok := originStartDates[repo]
+						if !ok {
+							startDates[idx][repo] = dt
+							lib.Printf("%s index added %s repo with %v start date\n", idx, repo, dt)
+							continue
+						}
+						lib.Printf("%s index %s repo with has %v start date, not updated to %v\n", idx, repo, startDate, dt)
+					}
+				}
+			}
+		}
+	}
+	// FIXME
+	if 1 == 1 {
+		os.Exit(1)
+	}
+	return
+}
+
 func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, startDates map[string]map[string]time.Time) {
 	// Environment context parse
 	var (
@@ -1741,7 +1806,8 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 	}
 	if !incremental {
 		lib.Printf("start date %v detected across indices, but it wasn't possible to set autodetected incremental sync mode\n", minFrom)
-		minFrom = gMinGHA
+		// minFrom = gMinGHA
+		minFrom = detectMinReposStartDate(ctx, config, dss, startDates)
 	}
 
 	// Current date
@@ -2777,6 +2843,7 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 		nRepos += len(repos)
 	}
 	path := "gha_map_repo_dates.json"
+	lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, len(gGHARepoDates), nRepos)
 	bts, err := jsoniter.Marshal(gGHARepoDates)
 	if err != nil {
 		lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", len(gGHARepoDates), nRepos, path)
