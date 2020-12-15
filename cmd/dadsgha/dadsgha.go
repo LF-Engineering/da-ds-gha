@@ -1930,11 +1930,15 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 				}
 			}
 		}
+		// Uncomment to update repo start dates when processing actual GHA data
+		// updateGHARepoDatesMonth(ctx)
 		dt = lib.NextHourStart(currMonthEnd)
 		if !dt.Before(time.Now()) {
 			break
 		}
 	}
+	// Uncomment to save GHA month repo start dates when processing actual GHA data
+	// saveGHARepoDates(ctx)
 	currentConfig := serializeConfig(config)
 	if maxProcessed.After(gMinGHA) {
 		err = saveFixturesState(ctx, currentConfig, maxProcessed)
@@ -2576,6 +2580,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		}
 		lib.Printf("generating GHA map %s - %s\n", lib.ToGHADate(dFrom), lib.ToGHADate(dTo))
 		if !detect {
+			gGHAMap = nil
 			gGHAMap = make(map[string]map[string]int)
 		}
 		dt := dFrom
