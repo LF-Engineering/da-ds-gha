@@ -200,7 +200,7 @@ func TimeParseAny(dtStr string) time.Time {
 
 // ParseGHAString - Parse GHA date in 2020121514 format
 func ParseGHAString(dtStr string) time.Time {
-	t, e := time.Parse("2006010215", dtStr)
+	t, e := time.Parse("2006-01-02-15", dtStr)
 	if e == nil {
 		return t
 	}
