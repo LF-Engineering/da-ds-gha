@@ -1672,6 +1672,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 		minFrom = gMinGHA
 		return
 	}
+	minFrom = lib.PrevHourStart(time.Now())
 	types := []string{"pull_request", "issue", "repository"}
 	for key, re := range config {
 		// Do not include all fixtures combined RE
@@ -1704,31 +1705,39 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 						gotIndices = true
 					}
 					dt := time.Unix(int64(rdt)*int64(3600), 0)
-					lib.Printf("%s check against %v\n", repo, indices)
+					if ctx.Debug > 1 {
+						lib.Printf("%s check against %v\n", repo, indices)
+					}
 					for _, idx := range indices {
 						originStartDates, ok := startDates[idx]
 						if !ok {
 							startDates[idx] = make(map[string]time.Time)
 							startDates[idx][repo] = dt
+							if dt.Before(minFrom) {
+								minFrom = dt
+							}
 							lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
 							continue
 						}
 						startDate, ok := originStartDates[repo]
 						if !ok {
 							startDates[idx][repo] = dt
+							if dt.Before(minFrom) {
+								minFrom = dt
+							}
 							lib.Printf("%s index added %s repo with %v start date\n", idx, repo, dt)
 							continue
 						}
 						lib.Printf("%s index %s repo with has %v start date, not updated to %v\n", idx, repo, startDate, dt)
+						if startDate.Before(minFrom) {
+							minFrom = startDate
+						}
 					}
 				}
 			}
 		}
 	}
-	// FIXME
-	if 1 == 1 {
-		os.Exit(1)
-	}
+	lib.Printf("detected start date: %v\n", minFrom)
 	return
 }
 
@@ -2406,91 +2415,6 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		return true
 	}
 	return false
-	/*
-		lib.Printf("comparing two states with %d and %d elements\n", len(currentConfig), len(savedConfig))
-		indices := map[string]struct{}{}
-		// return true if we can do incremental sync
-		checkStartDate := func(fSlug, dss string) bool {
-			ids := map[string]struct{}{}
-			suffMap := getIndexSuffixMap(dss)
-			for _, typ := range []string{"pull_request", "issue", "repository"} {
-				suff, ok := suffMap[typ]
-				if ok {
-					ids[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
-				}
-			}
-			for idx, originStartDates := range startDates {
-				_, ok := ids[idx]
-				if !ok {
-					continue
-				}
-				lib.Printf("%s:\n", idx)
-				for origin, startDate := range originStartDates {
-					lib.Printf("\t%s: %s\n", origin, lib.ToYMDHMSDate(startDate))
-				}
-				delete(ids, idx)
-			}
-			for idx := range ids {
-				lib.Printf("no %s yet\n", idx)
-			}
-			return len(ids) == 0
-		}
-		missing := false
-		for k, v := range currentConfig {
-			if k == ": " {
-				continue
-			}
-			ary := strings.Split(k, ": ")
-			project := ary[0]
-			data := ary[1]
-			ary2 := strings.Split(data, ":")
-			fSlug := ary2[0]
-			savedRE, ok := savedConfig[k]
-			dss := ary2[1]
-			if !ok {
-				lib.Printf("(%s, %s, %s) is new\n", fSlug, project, dss)
-				if !checkStartDate(fSlug, dss) {
-					missing = true
-				}
-				continue
-			}
-			if savedRE != v {
-				lib.Printf("(%s, %s, %s) configuration changed\n", fSlug, project, dss)
-				if !checkStartDate(fSlug, dss) {
-					missing = true
-				}
-				continue
-			}
-			suffMap := getIndexSuffixMap(dss)
-			for _, typ := range []string{"pull_request", "issue", "repository"} {
-				suff, ok := suffMap[typ]
-				if ok {
-					indices[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
-				}
-			}
-		}
-		if len(indices) == 0 {
-			return !missing
-		}
-		lib.Printf("%d indices had the same configuration, so they can be synced from the last run %v\n", len(indices), syncFrom)
-		// indices - the same config
-		for idx, originStartDates := range startDates {
-			_, ok := indices[idx]
-			if !ok {
-				lib.Printf("not updating %s - new or changed\n", idx)
-				continue
-			}
-			for origin, startDate := range originStartDates {
-				if startDate.Before(syncFrom) {
-					if ctx.Debug > 0 {
-						lib.Printf("updating %s/%s start date %v -> %v\n", idx, origin, startDate, syncFrom)
-					}
-					startDates[idx][origin] = syncFrom
-				}
-			}
-		}
-		return !missing
-	*/
 }
 
 func previewJSON(ctx *lib.Ctx, jsonStr []byte, dt time.Time, repos map[string]int) {
@@ -2667,6 +2591,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 					nThreads--
 					if data.ok {
 						gGHAMap[data.key] = data.repos
+						updateGHARepoDates(ctx, data.dt, data.repos)
 					}
 				}
 			}
@@ -2675,6 +2600,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				nThreads--
 				if data.ok {
 					gGHAMap[data.key] = data.repos
+					updateGHARepoDates(ctx, data.dt, data.repos)
 				}
 			}
 		} else {
@@ -2682,6 +2608,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				data := previewGHAJSONs(nil, ctx, dt)
 				if data.ok {
 					gGHAMap[data.key] = data.repos
+					updateGHARepoDates(ctx, data.dt, data.repos)
 				}
 				dt = dt.Add(time.Hour)
 			}
@@ -2692,7 +2619,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		if save {
 			saveGHAMap(ctx, dFrom)
 		}
-		updateGHARepoDates(ctx, dFrom)
+		//updateGHARepoDates(ctx, dFrom)
 		dFrom = lib.NextMonthStart(dFrom)
 		if !dFrom.Before(dDtTo) {
 			break
@@ -2791,38 +2718,11 @@ func loadGHARepoDates(ctx *lib.Ctx) {
 		return
 	}
 	gGHARepoDates = make(map[string]map[string]int)
-	//tmp := make(map[string]time.Time)
-	//err = jsoniter.Unmarshal(bts, &tmp)
 	err = jsoniter.Unmarshal(bts, &gGHARepoDates)
 	if err != nil {
 		lib.Printf("cannot unmarshal from GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	/*
-		for r, dt := range tmp {
-			ary := strings.Split(r, "/")
-			lAry := len(ary)
-			var (
-				org  string
-				repo string
-			)
-			if lAry == 1 {
-				org = ""
-				repo = ary[0]
-			} else if lAry == 2 {
-				org = ary[0]
-				repo = ary[1]
-			} else {
-				org = ary[0]
-				repo = strings.Join(ary[1:], "/")
-			}
-			_, ok := gGHARepoDates[org]
-			if !ok {
-				gGHARepoDates[org] = make(map[string]int)
-			}
-			gGHARepoDates[org][repo] = int(dt.Unix() / int64(3600))
-		}
-	*/
 	nRepos := 0
 	for _, repos := range gGHARepoDates {
 		nRepos += len(repos)
@@ -2858,7 +2758,7 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	return
 }
 
-func updateGHARepoDates(ctx *lib.Ctx, dt time.Time) {
+func updateGHARepoDates(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
 	if gGHARepoDates == nil {
 		gGHARepoDates = make(map[string]map[string]int)
 	}
@@ -2867,39 +2767,37 @@ func updateGHARepoDates(ctx *lib.Ctx, dt time.Time) {
 		had += len(repos)
 	}
 	idt := int(dt.Unix() / int64(3600))
-	for _, repos := range gGHAMap {
-		for r := range repos {
-			ary := strings.Split(r, "/")
-			lAry := len(ary)
-			var (
-				org  string
-				repo string
-			)
-			if lAry == 1 {
-				org = ""
-				repo = ary[0]
-			} else if lAry == 2 {
-				org = ary[0]
-				repo = ary[1]
-			} else {
-				org = ary[0]
-				repo = strings.Join(ary[1:], "/")
-			}
-			orgRepos, ok := gGHARepoDates[org]
-			if !ok {
-				gGHARepoDates[org] = make(map[string]int)
-				gGHARepoDates[org][repo] = idt
-				continue
-			}
-			ridt, ok := orgRepos[repo]
-			if ok {
-				if idt < ridt {
-					gGHARepoDates[org][repo] = idt
-				}
-				continue
-			}
-			gGHARepoDates[org][repo] = idt
+	for r := range repos {
+		ary := strings.Split(r, "/")
+		lAry := len(ary)
+		var (
+			org  string
+			repo string
+		)
+		if lAry == 1 {
+			org = ""
+			repo = ary[0]
+		} else if lAry == 2 {
+			org = ary[0]
+			repo = ary[1]
+		} else {
+			org = ary[0]
+			repo = strings.Join(ary[1:], "/")
 		}
+		orgRepos, ok := gGHARepoDates[org]
+		if !ok {
+			gGHARepoDates[org] = make(map[string]int)
+			gGHARepoDates[org][repo] = idt
+			continue
+		}
+		ridt, ok := orgRepos[repo]
+		if ok {
+			if idt < ridt {
+				gGHARepoDates[org][repo] = idt
+			}
+			continue
+		}
+		gGHARepoDates[org][repo] = idt
 	}
 	have := 0
 	for _, repos := range gGHARepoDates {
