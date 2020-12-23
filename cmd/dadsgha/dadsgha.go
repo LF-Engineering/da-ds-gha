@@ -934,7 +934,7 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 	gRichItems[rich["uuid"].(string)] = rich
 	nRichItems := len(gRichItems)
 	if nRichItems < ctx.ESBulkSize {
-		if ctx.Debug > 0 {
+		if ctx.Debug > 1 {
 			lib.Printf("Pending items: %d\n", nRichItems)
 		}
 		return
@@ -1674,12 +1674,34 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 		minFrom = gMinGHA
 		return
 	}
-	defer func() {
-		gGHARepoDates = nil
-		runGC()
-	}()
+	defer func() { runGC() }()
 	minFrom = lib.PrevHourStart(time.Now())
+	minRepo := ""
 	types := []string{"pull_request", "issue", "repository"}
+	reAll, _ := config[[2]string{"", ""}]
+	rdts := make(map[string]time.Time)
+	lib.Printf("generating repo - start date mapping.\n")
+	for org, orgRepos := range gGHARepoDates {
+		for r, rdt := range orgRepos {
+			var repo string
+			if org == "" {
+				repo = r
+			} else {
+				repo = org + "/" + r
+			}
+			if !repoHit(repo, reAll) {
+				continue
+			}
+			dt := time.Unix(int64(rdt)*int64(3600), 0)
+			rdts[repo] = dt
+			if ctx.Debug > 0 {
+				lib.Printf("added %s with %s start date\n", repo, lib.ToGHADate2(dt))
+			}
+		}
+	}
+	lib.Printf("generated repo - start date mapping with %d hits\n", len(rdts))
+	gGHARepoDates = nil
+	runGC()
 	for key, re := range config {
 		// Do not include all fixtures combined RE
 		if key[0] == "" {
@@ -1688,67 +1710,61 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 		gotIndices := false
 		indices := []string{}
 		fSlug := ""
-		for org, orgRepos := range gGHARepoDates {
-			for r, rdt := range orgRepos {
-				var repo string
-				if org == "" {
-					repo = r
-				} else {
-					repo = org + "/" + r
+		for repo, dt := range rdts {
+			if !repoHit(repo, re) {
+				continue
+			}
+			if !gotIndices {
+				ary := strings.Split(key[0], ":")
+				fSlug = ary[0]
+				suffMap := dss[fSlug]
+				for _, typ := range types {
+					suff, ok := suffMap[typ]
+					if ok {
+						idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-" + typ + suff
+						indices = append(indices, idx)
+					}
 				}
-				if !repoHit(repo, re) {
+				gotIndices = true
+			}
+			if ctx.Debug > 1 {
+				lib.Printf("%s check against %v\n", repo, indices)
+			}
+			for _, idx := range indices {
+				originStartDates, ok := startDates[idx]
+				if !ok {
+					startDates[idx] = make(map[string]time.Time)
+					startDates[idx][repo] = dt
+					if dt.Before(minFrom) {
+						minFrom = dt
+						minRepo = idx + "/" + repo
+					}
+					lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
 					continue
 				}
-				if !gotIndices {
-					ary := strings.Split(key[0], ":")
-					fSlug = ary[0]
-					suffMap := dss[fSlug]
-					for _, typ := range types {
-						suff, ok := suffMap[typ]
-						if ok {
-							idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-" + typ + suff
-							indices = append(indices, idx)
-						}
-					}
-					gotIndices = true
-				}
-				dt := time.Unix(int64(rdt)*int64(3600), 0)
-				if ctx.Debug > 1 {
-					lib.Printf("%s check against %v\n", repo, indices)
-				}
-				for _, idx := range indices {
-					originStartDates, ok := startDates[idx]
-					if !ok {
-						startDates[idx] = make(map[string]time.Time)
-						startDates[idx][repo] = dt
-						if dt.Before(minFrom) {
-							minFrom = dt
-						}
-						lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
-						continue
-					}
-					startDate, ok := originStartDates[repo]
-					if !ok {
-						startDates[idx][repo] = dt
-						if dt.Before(minFrom) {
-							minFrom = dt
-						}
-						if ctx.Debug > 0 {
-							lib.Printf("%s index added %s repo with %v start date\n", idx, repo, dt)
-						}
-						continue
+				startDate, ok := originStartDates[repo]
+				if !ok {
+					startDates[idx][repo] = dt
+					if dt.Before(minFrom) {
+						minFrom = dt
+						minRepo = idx + "/" + repo
 					}
 					if ctx.Debug > 0 {
-						lib.Printf("%s index %s repo with %v start date, not updated to %v\n", idx, repo, startDate, dt)
+						lib.Printf("%s index added %s repo with %v start date\n", idx, repo, dt)
 					}
-					if startDate.Before(minFrom) {
-						minFrom = startDate
-					}
+					continue
+				}
+				if ctx.Debug > 0 {
+					lib.Printf("%s index %s repo with %v start date, not updated to %v\n", idx, repo, startDate, dt)
+				}
+				if startDate.Before(minFrom) {
+					minFrom = startDate
+					minRepo = idx + "/" + repo
 				}
 			}
 		}
 	}
-	lib.Printf("detected start date: %v\n", minFrom)
+	lib.Printf("detected start date: %v from %s repo\n", minFrom, minRepo)
 	return
 }
 
@@ -1814,10 +1830,12 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 	}
 
 	minFrom := time.Now()
-	for _, originStartDates := range startDates {
-		for _, startDate := range originStartDates {
+	minRepo := ""
+	for idx, originStartDates := range startDates {
+		for repo, startDate := range originStartDates {
 			if startDate.Before(minFrom) {
 				minFrom = startDate
+				minRepo = idx + "/" + repo
 			}
 		}
 	}
@@ -1825,7 +1843,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 		minFrom = gMinGHA
 	}
 	if !incremental {
-		lib.Printf("start date %v detected across indices, but it wasn't possible to set autodetected incremental sync mode\n", minFrom)
+		lib.Printf("start date %v detected across indices (%s), but it wasn't possible to set autodetected incremental sync mode\n", minRepo, minFrom)
 		// minFrom = gMinGHA
 		minFrom = detectMinReposStartDate(ctx, config, dss, startDates)
 	}
