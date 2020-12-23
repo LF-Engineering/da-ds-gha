@@ -1696,48 +1696,53 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 				} else {
 					repo = org + "/" + r
 				}
-				if repoHit(repo, re) {
-					if !gotIndices {
-						ary := strings.Split(key[0], ":")
-						fSlug = ary[0]
-						suffMap := dss[fSlug]
-						for _, typ := range types {
-							suff, ok := suffMap[typ]
-							if ok {
-								idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-" + typ + suff
-								indices = append(indices, idx)
-							}
+				if !repoHit(repo, re) {
+					continue
+				}
+				if !gotIndices {
+					ary := strings.Split(key[0], ":")
+					fSlug = ary[0]
+					suffMap := dss[fSlug]
+					for _, typ := range types {
+						suff, ok := suffMap[typ]
+						if ok {
+							idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-" + typ + suff
+							indices = append(indices, idx)
 						}
-						gotIndices = true
 					}
-					dt := time.Unix(int64(rdt)*int64(3600), 0)
-					if ctx.Debug > 1 {
-						lib.Printf("%s check against %v\n", repo, indices)
-					}
-					for _, idx := range indices {
-						originStartDates, ok := startDates[idx]
-						if !ok {
-							startDates[idx] = make(map[string]time.Time)
-							startDates[idx][repo] = dt
-							if dt.Before(minFrom) {
-								minFrom = dt
-							}
-							lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
-							continue
+					gotIndices = true
+				}
+				dt := time.Unix(int64(rdt)*int64(3600), 0)
+				if ctx.Debug > 1 {
+					lib.Printf("%s check against %v\n", repo, indices)
+				}
+				for _, idx := range indices {
+					originStartDates, ok := startDates[idx]
+					if !ok {
+						startDates[idx] = make(map[string]time.Time)
+						startDates[idx][repo] = dt
+						if dt.Before(minFrom) {
+							minFrom = dt
 						}
-						startDate, ok := originStartDates[repo]
-						if !ok {
-							startDates[idx][repo] = dt
-							if dt.Before(minFrom) {
-								minFrom = dt
-							}
+						lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
+						continue
+					}
+					startDate, ok := originStartDates[repo]
+					if !ok {
+						startDates[idx][repo] = dt
+						if dt.Before(minFrom) {
+							minFrom = dt
+						}
+						if ctx.Debug > 0 {
 							lib.Printf("%s index added %s repo with %v start date\n", idx, repo, dt)
-							continue
 						}
+						continue
+					}
+					if ctx.Debug > 0 {
 						lib.Printf("%s index %s repo with %v start date, not updated to %v\n", idx, repo, startDate, dt)
-						if startDate.Before(minFrom) {
-							minFrom = startDate
-						}
+					}
+					if startDate.Before(minFrom) {
+						minFrom = startDate
 					}
 				}
 			}
