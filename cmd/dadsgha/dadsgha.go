@@ -1480,7 +1480,7 @@ func parseJSON(ctx *lib.Ctx, jsonStr []byte, dt time.Time, config map[[2]string]
 			hits[key] = struct{}{}
 		}
 	}
-	if len(hits) > 1 {
+	if ctx.Debug > 0 && len(hits) > 1 {
 		lib.Printf("%s gives multiple projects hits; %+v\n", fullName, hits)
 	}
 	return
