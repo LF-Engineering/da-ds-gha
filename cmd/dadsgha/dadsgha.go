@@ -1524,6 +1524,20 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	repos, ok := gGHAMap[ky]
 	// lib.Printf("%s -> %v(%d)\n", ky, ok, len(repos))
 	if ok {
+		reAll, _ := config[[2]string{"", ""}]
+		hits := false
+		for repo := range repos {
+			if repoHit(repo, reAll) {
+				hits = true
+				break
+			}
+		}
+		if !hits {
+			if ctx.Debug > 1 {
+				lib.Printf("we don't need to process GHA %s: no hits\n", ky)
+			}
+			return
+		}
 		needsProcessing := false
 		types := []string{"pull_request", "issue", "repository"}
 		for key, re := range config {
