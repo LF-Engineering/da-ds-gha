@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -1674,6 +1676,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	}
 	defer func() {
 		gGHARepoDates = nil
+		runGC()
 	}()
 	minFrom = lib.PrevHourStart(time.Now())
 	types := []string{"pull_request", "issue", "repository"}
@@ -1731,7 +1734,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 							lib.Printf("%s index added %s repo with %v start date\n", idx, repo, dt)
 							continue
 						}
-						lib.Printf("%s index %s repo with has %v start date, not updated to %v\n", idx, repo, startDate, dt)
+						lib.Printf("%s index %s repo with %v start date, not updated to %v\n", idx, repo, startDate, dt)
 						if startDate.Before(minFrom) {
 							minFrom = startDate
 						}
@@ -1888,6 +1891,14 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 		uploadRichItems(ctx, false)
 	}()
 
+	igc := 0
+	maybeGC := func() {
+		igc++
+		if igc%24 == 0 {
+			runGC()
+		}
+	}
+
 	maxProcessed := gMinGHA
 	dt := dFrom
 	for {
@@ -1912,6 +1923,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 					dateToFunc()
 					if pdt != nil && pdt.After(maxProcessed) {
 						maxProcessed = *pdt
+						maybeGC()
 					}
 				}
 			}
@@ -1921,6 +1933,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 				dateToFunc()
 				if pdt != nil && pdt.After(maxProcessed) {
 					maxProcessed = *pdt
+					maybeGC()
 				}
 			}
 		} else {
@@ -1930,6 +1943,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 				dt = dt.Add(time.Hour)
 				if pdt != nil && pdt.After(maxProcessed) {
 					maxProcessed = *pdt
+					maybeGC()
 				}
 			}
 		}
@@ -2405,7 +2419,8 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		return false
 	}
 	// FIXME: prev or current?
-	syncFrom := lib.PrevHourStart(whenSaved)
+	// syncFrom := lib.PrevHourStart(whenSaved)
+	syncFrom := lib.HourStart(whenSaved)
 	// If All RE is the same, then the configuration didn't changed since last run
 	if savedAllRE == currentAllRE {
 		lib.Printf("no fixtures state was changed since %+v\n", whenSaved)
@@ -2547,6 +2562,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 }
 
 func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) (changed bool) {
+	defer func() { runGC() }()
 	if gGHAMap == nil {
 		gGHAMap = make(map[string]map[string]int)
 		changed = true
@@ -2575,6 +2591,13 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 			dDtTo = lastGHAHour
 		}
 	}
+	igc := 0
+	maybeGC := func() {
+		igc++
+		if igc%96 == 0 {
+			runGC()
+		}
+	}
 	dFrom := dDtFrom
 	for {
 		dTo := lib.PrevHourStart(lib.NextMonthStart(dFrom))
@@ -2599,6 +2622,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 					nThreads--
 					if data.ok {
 						gGHAMap[data.key] = data.repos
+						maybeGC()
 						// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 					}
 				}
@@ -2608,6 +2632,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				nThreads--
 				if data.ok {
 					gGHAMap[data.key] = data.repos
+					maybeGC()
 					// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 				}
 			}
@@ -2616,6 +2641,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				data := previewGHAJSONs(nil, ctx, dt)
 				if data.ok {
 					gGHAMap[data.key] = data.repos
+					maybeGC()
 					// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 				}
 				dt = dt.Add(time.Hour)
@@ -2641,6 +2667,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 }
 
 func loadGHAMap(ctx *lib.Ctx, dt time.Time) {
+	defer func() { runGC() }()
 	gGHAMap = nil
 	sdt := lib.ToYMDate(dt)
 	path := "gha_map_" + sdt + ".json"
@@ -2667,6 +2694,7 @@ func saveGHAMap(ctx *lib.Ctx, dt time.Time) {
 	if len(gGHAMap) < 1 {
 		return
 	}
+	defer func() { runGC() }()
 	sdt := lib.ToYMDate(dt)
 	path := "gha_map_" + sdt + ".json"
 	bts, err := jsoniter.Marshal(gGHAMap)
@@ -2717,6 +2745,7 @@ func maxDateGHAMap(ctx *lib.Ctx) *time.Time {
 }
 
 func loadGHARepoDates(ctx *lib.Ctx) {
+	defer func() { runGC() }()
 	gGHARepoDates = nil
 	path := "gha_map_repo_dates.json"
 	lib.Printf("loading GHA map repo dates %s\n", path)
@@ -2746,6 +2775,7 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	if len(gGHARepoDates) < 1 {
 		return
 	}
+	defer func() { runGC() }()
 	nRepos := 0
 	for _, repos := range gGHARepoDates {
 		nRepos += len(repos)
@@ -2767,6 +2797,7 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 }
 
 func updateGHARepoDatesMonth(ctx *lib.Ctx) {
+	defer func() { runGC() }()
 	if gGHARepoDates == nil {
 		gGHARepoDates = make(map[string]map[string]int)
 	}
@@ -2822,6 +2853,8 @@ func updateGHARepoDatesMonth(ctx *lib.Ctx) {
 }
 
 func updateGHARepoDatesHour(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
+	// Not deferring GC because this is too often - it's for every hour
+	//defer func() { runGC() }()
 	if gGHARepoDates == nil {
 		gGHARepoDates = make(map[string]map[string]int)
 	}
@@ -2874,6 +2907,7 @@ func updateGHARepoDatesHour(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
 }
 
 func handleGHAMap(ctx *lib.Ctx) {
+	defer func() { runGC() }()
 	loadGHARepoDates(ctx)
 	had := 0
 	for _, repos := range gGHARepoDates {
@@ -2916,9 +2950,22 @@ func handleMT(ctx *lib.Ctx) {
 	}
 }
 
+func getMemUsage() string {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return fmt.Sprintf("alloc:%dM heap-alloc:%dM(%dk objs) total:%dM sys:%dM #gc:%d", m.Alloc>>20, m.HeapAlloc>>20, m.HeapObjects>>10, m.TotalAlloc>>20, m.Sys>>20, m.NumGC)
+}
+
+func runGC() {
+	lib.Printf(getMemUsage() + "\n")
+	runtime.GC()
+	lib.Printf(getMemUsage() + "\n")
+}
+
 func main() {
 	var ctx lib.Ctx
 	dtStart := time.Now()
+	debug.SetGCPercent(25)
 	ctx.Init()
 	path := os.Getenv("GHA_FIXTURES_DIR")
 	if len(os.Args) > 1 {
