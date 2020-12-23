@@ -59,6 +59,7 @@ var (
 	gRichMtx           *sync.Mutex
 	gEnsuredIndicesMtx *sync.Mutex
 	gUploadMtx         *sync.Mutex
+	gDocsUploaded      int64
 	gRichItems         = map[string]map[string]interface{}{}
 	gEnsuredIndices    = map[string]struct{}{}
 	githubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
@@ -794,6 +795,7 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 		lib.Printf("bulk upload status:%d, errors flag %v,%v\n%s\n", resp.StatusCode, ers, ok, prettyPrint(result))
 	}
 	if !ers {
+		gDocsUploaded += int64(nItems)
 		lib.Printf("bulk uploaded %d documents\n", nItems)
 		return
 	}
@@ -887,6 +889,7 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 		}
 	}
 	lib.Printf("uploaded %d/%d documents, failed %d (in one by one fallback)\n", uploaded, nItems, notUploaded)
+	gDocsUploaded += int64(uploaded)
 	return
 }
 
@@ -3017,5 +3020,5 @@ func main() {
 	}
 	gha(&ctx, incremental, config, startDates)
 	dtEnd := time.Now()
-	lib.Printf("Took: %v\n", dtEnd.Sub(dtStart))
+	lib.Printf("Uploaded: %d, took: %v\n", gDocsUploaded, dtEnd.Sub(dtStart))
 }
