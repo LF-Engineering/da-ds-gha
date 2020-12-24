@@ -2476,6 +2476,7 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		}
 		return true
 	}
+	lib.Printf("fixtures state changed:\nsaved: %s\ncurrent: %s\nskipping incremental mode, switching to detecting start date\n", savedAllRE, currentAllRE)
 	return false
 }
 
