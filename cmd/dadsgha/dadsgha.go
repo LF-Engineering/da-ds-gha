@@ -1533,7 +1533,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			}
 		}
 		if !hits {
-			if ctx.Debug > 1 {
+			if ctx.Debug > 0 {
 				lib.Printf("we don't need to process GHA %s: no hits\n", ky)
 			}
 			return
@@ -1581,13 +1581,17 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 						}
 						startDate, ok := originStartDates[repo]
 						if !ok {
-							lib.Printf("%s repo matches %s/%s, but %s/%s start date is missing, GHA %v must be processed\n", repo, fSlug, key[1], idx, repo, ky)
+							if ctx.Debug > 0 {
+								lib.Printf("%s repo matches %s/%s, but %s/%s start date is missing, GHA %v must be processed\n", repo, fSlug, key[1], idx, repo, ky)
+							}
 							needsProcessing = true
 							break
 						}
 						ghaDate := lib.HourStart(startDate)
 						if ghaDate.Before(dt) {
-							lib.Printf("%s repo matches %s/%s in %s, start date is %v, GHA %v must be processed\n", repo, fSlug, key[1], idx, startDate, ky)
+							if ctx.Debug > 0 {
+								lib.Printf("%s repo matches %s/%s in %s, start date is %v, GHA %v must be processed\n", repo, fSlug, key[1], idx, startDate, ky)
+							}
 							needsProcessing = true
 							break
 						}
@@ -1596,7 +1600,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			}
 		}
 		if !needsProcessing {
-			if ctx.Debug > 1 {
+			if ctx.Debug > 0 {
 				lib.Printf("we don't need to process GHA %s\n", ky)
 			}
 			return
@@ -1756,7 +1760,9 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 						minFrom = dt
 						minRepo = idx + "/" + repo
 					}
-					lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
+					if ctx.Debug > 0 {
+						lib.Printf("%s index was missing, added %s repo with %v start date\n", idx, repo, dt)
+					}
 					continue
 				}
 				startDate, ok := originStartDates[repo]
@@ -2476,7 +2482,10 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		}
 		return true
 	}
-	lib.Printf("fixtures state changed:\nsaved: %s\ncurrent: %s\nskipping incremental mode, switching to detecting start date\n", savedAllRE, currentAllRE)
+	lib.Printf("fixtures state changed\n")
+	lib.Printf("saved: %s\n", savedAllRE)
+	lib.Printf("current: %s\n", currentAllRE)
+	lib.Printf("skipping incremental mode, switching to detecting start date\n")
 	return false
 }
 
