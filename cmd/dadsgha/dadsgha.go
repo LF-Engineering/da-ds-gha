@@ -1934,7 +1934,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 	igc := 0
 	maybeGC := func() {
 		igc++
-		if igc%24 == 0 {
+		if igc%6 == 0 {
 			runGC()
 		}
 	}
@@ -2634,7 +2634,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 	igc := 0
 	maybeGC := func() {
 		igc++
-		if igc%96 == 0 {
+		if igc%24 == 0 {
 			runGC()
 		}
 	}
