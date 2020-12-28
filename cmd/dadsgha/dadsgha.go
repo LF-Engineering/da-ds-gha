@@ -994,6 +994,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		lib.Printf("Missing Issue object in %+v\n", ev)
 		return
 	}
+	issue := ev.Payload.Issue
 	fSlug := ev.GHAFxSlug
 	suff, ok := ev.GHASuffMap["issue"]
 	if !ok {
@@ -1012,15 +1013,24 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
-		return
+		// FIXME: uncomment
+		// return
 	}
 	rich := make(map[string]interface{})
+	dbg := func() {
+		// TODO: continue Issue enrich here
+		pretty, _ := jsoniter.MarshalIndent(ev, "", "  ")
+		fmt.Printf("\n\n%+v\n\n", string(pretty))
+		pretty, _ = jsoniter.MarshalIndent(rich, "", "  ")
+		fmt.Printf("\n\n%+v\n\n", string(pretty))
+		os.Exit(1)
+	}
 	isPullRequest := ev.Payload.PullRequest != nil
 	itemType := "issue"
 	if isPullRequest {
 		itemType = "pull request"
 	}
-	issueID := strconv.Itoa(ev.Payload.Issue.ID)
+	issueID := strconv.Itoa(issue.ID)
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, issueID)
 	repo := "https://github.com/" + origin
 	rich["slug"] = ev.GHAFxSlug
@@ -1032,6 +1042,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["tag"] = repo
 	rich["repository"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
+	rich["metadata__timestamp"] = time.Now()
 	rich["uuid"] = uuid
 	rich["id"] = issueID
 	rich["is_github_issue"] = 1
@@ -1041,80 +1052,13 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["offset"] = nil
 	rich["github_repo"] = origin
 	rich["old_fmt"] = false
+	if issue.ClosedAt == nil {
+		rich["time_to_close_days"] = nil
+	} else {
+		rich["time_to_close_days"] = float64(issue.ClosedAt.Sub(issue.CreatedAt).Seconds()) / 86400.0
+		dbg()
+	}
 	addRichItem(ctx, rich)
-	// TODO: continue Issue enrich here
-	processed = true
-	return
-}
-
-func enrichIssueDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates map[string]map[string]time.Time) (processed bool) {
-	//  Possible Issue event types:
-	//  IssueCommentEvent
-	//  IssuesEvent
-	if ev.Payload.Issue == nil {
-		lib.Printf("Missing Issue object (old format) in %+v\n", ev)
-		return
-	}
-	fSlug := ev.GHAFxSlug
-	suff, ok := ev.GHASuffMap["issue"]
-	if !ok {
-		if ctx.Debug > 0 {
-			lib.Printf("%s: issue not configured\n", origin)
-		}
-		return
-	}
-	idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-issue" + suff
-	var startDate time.Time
-	indexStartDates, ok := startDates[idx]
-	if ok {
-		startDate, ok = indexStartDates[origin]
-	}
-	if ok && !startDate.Before(ev.CreatedAt) {
-		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
-		}
-		return
-	}
-	rich := make(map[string]interface{})
-	isPullRequest := ev.Payload.PullRequest != nil
-	itemType := "issue"
-	if isPullRequest {
-		itemType = "pull request"
-	}
-	issueID := -1
-	if ev.Payload.Issue != nil {
-		issueID = *ev.Payload.Issue
-	}
-	if issueID < 0 && ev.Payload.IssueID != nil {
-		issueID = *ev.Payload.IssueID
-	}
-	if issueID < 0 {
-		lib.Printf("%s: cannot find issue ID in: %+v\n", origin, ev)
-		return
-	}
-	sIssueID := strconv.Itoa(issueID)
-	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, sIssueID)
-	repo := "https://github.com/" + origin
-	rich["slug"] = ev.GHAFxSlug
-	rich["index"] = idx
-	rich["project"] = ev.GHAProj
-	rich["project_ts"] = time.Now().Unix()
-	rich["gha_hour"] = ev.GHADt
-	rich["origin"] = repo
-	rich["tag"] = repo
-	rich["repository"] = repo
-	rich["metadata__updated_on"] = ev.CreatedAt
-	rich["uuid"] = uuid
-	rich["id"] = issueID
-	rich["is_github_issue"] = 1
-	rich["pull_request"] = isPullRequest
-	rich["item_type"] = itemType
-	rich["metadata__enriched_on"] = time.Now()
-	rich["offset"] = nil
-	rich["github_repo"] = origin
-	rich["old_fmt"] = true
-	addRichItem(ctx, rich)
-	// TODO: continue old Issue enrich here
 	processed = true
 	return
 }
@@ -1291,8 +1235,6 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[s
 	// FIXME: GHA doesn't have this data
 	rich["subscribers_count"] = 0
 	addRichItem(ctx, rich)
-	//pretty, _ := jsoniter.MarshalIndent(rich, "", "  ")
-	//fmt.Printf("\n\n%+v\n\n", string(pretty))
 	processed = true
 	return
 }
@@ -1397,11 +1339,8 @@ func enrichData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[strin
 }
 
 func enrichDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates map[string]map[string]time.Time) (processed int) {
+	// we don't have enought data to enrich issue type object In pre-2015 event format
 	switch ev.Type {
-	case "IssueCommentEvent", "IssuesEvent":
-		if enrichIssueDataOld(ctx, ev, origin, startDates) {
-			processed++
-		}
 	case "PullRequestEvent", "PullRequestReviewEvent", "PullRequestReviewCommentEvent":
 		if enrichPRDataOld(ctx, ev, origin, startDates) {
 			processed++
@@ -1521,7 +1460,13 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 		}
 	}()
 	ky := lib.ToGHADate2(dt)
-	repos, ok := gGHAMap[ky]
+	var (
+		ok    bool
+		repos map[string]int
+	)
+	if gGHAMap != nil {
+		repos, ok = gGHAMap[ky]
+	}
 	// lib.Printf("%s -> %v(%d)\n", ky, ok, len(repos))
 	if ok {
 		reAll, _ := config[[2]string{"", ""}]
@@ -1886,6 +1831,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 	if endH == "" {
 		endH = lib.Now
 	}
+	lib.Printf("Date range: %s %s - %s %s\n", startD, startH, endD, endH)
 
 	// Parse from day & hour
 	if strings.ToLower(startH) == lib.Now {
@@ -1932,6 +1878,9 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 			dTo = currMonthEnd
 		}
 	}
+	currMonthEnd = lib.PrevHourStart(lib.NextMonthStart(dFrom))
+	dateToFunc()
+	lib.Printf("Date range: %s - %s\n", lib.ToGHADate2(dFrom), lib.ToGHADate2(dTo))
 
 	defer func() {
 		uploadRichItems(ctx, false)
@@ -1951,9 +1900,11 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 		currMonthEnd = lib.PrevHourStart(lib.NextMonthStart(dt))
 		dateToFunc()
 		lib.Printf("Processing month %s - %s\n", lib.ToGHADate(dt), lib.ToGHADate(currMonthEnd))
-		loadGHAMap(ctx, dt)
-		if gGHAMap == nil {
-			lib.Printf("warning, no GHA map file for %s, doing a full scan\n", lib.ToGHADate(dt))
+		if !ctx.NoGHAMap {
+			loadGHAMap(ctx, dt)
+			if gGHAMap == nil {
+				lib.Printf("warning, no GHA map file for %s, doing a full scan\n", lib.ToGHADate(dt))
+			}
 		}
 		if gThrN > 1 {
 			ch := make(chan *time.Time)
@@ -2717,6 +2668,9 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 }
 
 func loadGHAMap(ctx *lib.Ctx, dt time.Time) {
+	if ctx.NoGHAMap {
+		return
+	}
 	defer func() { runGC() }()
 	gGHAMap = nil
 	sdt := lib.ToYMDate(dt)
@@ -2957,6 +2911,9 @@ func updateGHARepoDatesHour(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
 }
 
 func handleGHAMap(ctx *lib.Ctx) {
+	if ctx.NoGHAMap {
+		return
+	}
 	defer func() { runGC() }()
 	loadGHARepoDates(ctx)
 	had := 0

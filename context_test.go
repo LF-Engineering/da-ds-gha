@@ -28,6 +28,7 @@ func copyContext(in *lib.Ctx) *lib.Ctx {
 		LoadConfig:    in.LoadConfig,
 		SaveConfig:    in.SaveConfig,
 		NoIncremental: in.NoIncremental,
+		NoGHAMap:      in.NoGHAMap,
 		ConfigFile:    in.ConfigFile,
 		TestMode:      in.TestMode,
 	}
@@ -176,6 +177,7 @@ func TestInit(t *testing.T) {
 		LoadConfig:    false,
 		SaveConfig:    false,
 		NoIncremental: false,
+		NoGHAMap:      false,
 		ConfigFile:    "gha_config",
 		TestMode:      true,
 	}
@@ -297,6 +299,15 @@ func TestInit(t *testing.T) {
 				t,
 				copyContext(&defaultContext),
 				map[string]interface{}{"NoIncremental": true},
+			),
+		},
+		{
+			"Setting no GHA map mode",
+			map[string]string{"GHA_NO_GHA_MAP": "1"},
+			dynamicSetFields(
+				t,
+				copyContext(&defaultContext),
+				map[string]interface{}{"NoGHAMap": true},
 			),
 		},
 	}
