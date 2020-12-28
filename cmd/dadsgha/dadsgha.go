@@ -1177,6 +1177,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["repository"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = now
+	rich["grimoire_creation_date"] = ev.CreatedAt
 	rich["uuid"] = uuid
 	rich["id"] = issueID
 	rich["is_github_issue"] = 1
@@ -1190,6 +1191,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	rich["github_repo"] = githubRepo
 	rich["old_fmt"] = false
+	rich["closed_at"] = issue.ClosedAt
 	if issue.ClosedAt == nil {
 		rich["time_to_close_days"] = nil
 	} else {
@@ -1268,6 +1270,15 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		labels = append(labels, label.Name)
 	}
 	rich["labels"] = labels
+	rich["comments"] = issue.Comments
+	rich["locked"] = issue.Locked
+	if issue.Milestone != nil {
+		rich["milestone"] = issue.Milestone.Name
+	} else {
+		rich["milestone"] = nil
+	}
+	// FIXME: we don't have this information in GHA
+	// rich["time_to_first_attention"]
 	if 1 == 1 {
 		dbg()
 	}
