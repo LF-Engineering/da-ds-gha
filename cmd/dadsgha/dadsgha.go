@@ -59,15 +59,19 @@ var (
 	gRichMtx           *sync.Mutex
 	gEnsuredIndicesMtx *sync.Mutex
 	gUploadMtx         *sync.Mutex
+	gUploadDBMtx       *sync.Mutex
 	gDocsUploaded      int64
+	gGitHubUsersMtx    *sync.RWMutex
+	gGitHubMtx         *sync.RWMutex
+	gDadsCtx           dads.Ctx
+	gIdentityMtx       *sync.Mutex
 	gRichItems         = map[string]map[string]interface{}{}
 	gEnsuredIndices    = map[string]struct{}{}
 	githubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
 	gNewFormatStarts   = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
 	gMinGHA            = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
 	gGitHubUsers       = map[string]map[string]*string{}
-	gGitHubUsersMtx    *sync.RWMutex
-	gGitHubMtx         *sync.RWMutex
+	gIdentities        = map[[3]string]struct{}{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -1106,6 +1110,64 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 	uploadRichItems(ctx, true)
 }
 
+func uploadToDB(ctx *lib.Ctx, items [][3]string) (err error) {
+	return
+}
+
+func uploadIdentities(ctx *lib.Ctx, async bool) {
+	// Even if there is no data, last async jobs can still be running in the background
+	// The final call non-async is always ensuring that ES bulk upload job is finished
+	if !async && gThrN > 1 {
+		gUploadDBMtx.Lock()
+		gUploadDBMtx.Unlock()
+	}
+	nItems := len(gIdentities)
+	if nItems == 0 {
+		return
+	}
+	items := [][3]string{}
+	for item := range gIdentities {
+		items = append(items, item)
+	}
+	if async && gThrN > 1 {
+		gUploadDBMtx.Lock()
+		go func() {
+			err := uploadToDB(ctx, items)
+			gUploadDBMtx.Unlock()
+			if err != nil {
+				lib.Printf("uploadToDB: %+v\n", err)
+			}
+		}()
+	} else {
+		err := uploadToDB(ctx, items)
+		if err != nil {
+			lib.Printf("uploadToDB: %+v\n", err)
+		}
+	}
+	gIdentities = map[[3]string]struct{}{}
+}
+
+func addIdentity(ctx *lib.Ctx, identity [3]string) {
+	var pctx *dads.Ctx
+	if gIdentityMtx != nil {
+		gIdentityMtx.Lock()
+		pctx = &gDadsCtx
+		defer func() {
+			gIdentityMtx.Unlock()
+		}()
+	}
+	gIdentities[identity] = struct{}{}
+	nIdentities := len(gIdentities)
+	if nIdentities < pctx.DBBulkSize {
+		// FIXME
+		if ctx.Debug > -1 {
+			lib.Printf("Pending identities: %d\n", nIdentities)
+		}
+		return
+	}
+	uploadIdentities(ctx, true)
+}
+
 func getForksStarsCount(ev *lib.Event, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
 	if ev.Payload.PullRequest == nil {
 		return
@@ -1237,11 +1299,19 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, ev)
 		return
 	}
+	// name, username, email
+	identity := [3]string{"none", login, "none"}
 	if found {
-		rich["user_name"] = userData["name"]
-		rich["author_name"] = userData["name"]
-		if userData["email"] != nil {
-			ary := strings.Split(*userData["email"], "@")
+		name := userData["name"]
+		email := userData["email"]
+		if name != nil {
+			identity[0] = *name
+		}
+		rich["user_name"] = name
+		rich["author_name"] = name
+		if email != nil {
+			identity[2] = *email
+			ary := strings.Split(*email, "@")
 			if len(ary) > 1 {
 				rich["user_domain"] = ary[1]
 			}
@@ -1259,6 +1329,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["user_org"] = nil
 		rich["user_location"] = nil
 		rich["user_geolocation"] = nil
+		addIdentity(ctx, identity)
 	}
 	if issue.Assignee != nil {
 		login := issue.Assignee.Login
@@ -1269,9 +1340,17 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			return
 		}
 		if found {
-			rich["assignee_name"] = userData["name"]
-			if userData["email"] != nil {
-				ary := strings.Split(*userData["email"], "@")
+			// name, username, email
+			identity := [3]string{"none", login, "none"}
+			name := userData["name"]
+			email := userData["email"]
+			rich["assignee_name"] = name
+			if name != nil {
+				identity[0] = *name
+			}
+			if email != nil {
+				identity[2] = *email
+				ary := strings.Split(*email, "@")
 				if len(ary) > 1 {
 					rich["assignee_domain"] = ary[1]
 				}
@@ -1281,6 +1360,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			rich["assignee_org"] = userData["company"]
 			rich["assignee_location"] = userData["location"]
 			rich["assignee_geolocation"] = nil
+			addIdentity(ctx, identity)
 		}
 	}
 	rich["id"] = issue.ID
@@ -2137,6 +2217,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 
 	defer func() {
 		uploadRichItems(ctx, false)
+		uploadIdentities(ctx, false)
 	}()
 
 	igc := 0
@@ -3208,6 +3289,8 @@ func handleMT(ctx *lib.Ctx) {
 		gUploadMtx = &sync.Mutex{}
 		gGitHubUsersMtx = &sync.RWMutex{}
 		gGitHubMtx = &sync.RWMutex{}
+		gIdentityMtx = &sync.Mutex{}
+		gUploadDBMtx = &sync.Mutex{}
 		dads.SetMT()
 	}
 }
@@ -3224,11 +3307,20 @@ func runGC() {
 	lib.Printf(getMemUsage() + "\n")
 }
 
+func initDadsCtx(ctx *lib.Ctx) {
+	_ = os.Setenv("DA_DS", "github")
+	_ = os.Setenv("DA_GITHUB_DB_CONN", os.Getenv("GHA_DB_CONN"))
+	_ = os.Setenv("DA_GITHUB_DB_BULK_SIZE", os.Getenv("GHA_DB_BULK_SIZE"))
+	gDadsCtx.Init()
+	dads.ConnectAffiliationsDB(&gDadsCtx)
+}
+
 func main() {
 	var ctx lib.Ctx
 	dtStart := time.Now()
 	debug.SetGCPercent(25)
 	ctx.Init()
+	initDadsCtx(&ctx)
 	path := os.Getenv("GHA_FIXTURES_DIR")
 	if len(os.Args) > 1 {
 		path = os.Args[1]
