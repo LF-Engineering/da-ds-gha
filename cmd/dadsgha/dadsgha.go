@@ -65,6 +65,9 @@ var (
 	githubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
 	gNewFormatStarts   = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
 	gMinGHA            = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
+	gGitHubUsers       = map[string]map[string]*string{}
+	gGitHubUsersMtx    = &sync.RWMutex{}
+	gGitHubMtx         = &sync.RWMutex{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -112,6 +115,77 @@ func handleRate(ctx *lib.Ctx) (aHint int, canCache bool) {
 	}
 	aHint = h
 	// lib.Printf("Found usable token %d/%d/%v, cache enabled: %v\n", aHint, rem[h], wait[h], canCache)
+	return
+}
+
+func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found bool, err error) {
+	var ok bool
+	gGitHubUsersMtx.RLock()
+	user, ok = gGitHubUsers[login]
+	cacheSize := len(gGitHubUsers)
+	gGitHubUsersMtx.RUnlock()
+	if ok {
+		found = len(user) > 0
+		lib.Printf("getGitHubUser(%d): cache hit: %s\n", cacheSize, login)
+		return
+	}
+	lib.Printf("getGitHubUser(%d): cache miss: %s\n", cacheSize, login)
+	var c *github.Client
+	gGitHubMtx.RLock()
+	if !gInit || gHint < 0 {
+		lib.Printf("getGitHubUser: init\n")
+		gGitHubMtx.RUnlock()
+		gGitHubMtx.Lock()
+		if !gInit {
+			gctx, gc = lib.GHClient(ctx)
+			gInit = true
+		}
+		gHint, _ = handleRate(ctx)
+		c = gc[gHint]
+		gGitHubMtx.Unlock()
+	} else {
+		lib.Printf("getGitHubUser: reuse\n")
+		c = gc[gHint]
+		gGitHubMtx.RUnlock()
+	}
+	retry := false
+	for {
+		var (
+			response *github.Response
+			usr      *github.User
+			e        error
+		)
+		lib.Printf("getGitHubUser: ask %s\n", login)
+		usr, response, e = c.Users.Get(gctx, login)
+		// lib.Printf("GET %s -> {%+v, %+v, %+v}\n", login, usr, response, e)
+		if e != nil && strings.Contains(e.Error(), "404 Not Found") {
+			gGitHubUsersMtx.Lock()
+			gGitHubUsers[login] = map[string]*string{}
+			gGitHubUsersMtx.Unlock()
+			return
+		}
+		if e != nil && !retry {
+			lib.Printf("Error getting %s user: response: %+v, error: %+v, retrying rate\n", login, response, e)
+			gGitHubMtx.Lock()
+			lib.Printf("getGitHubUser: handle rate\n")
+			gHint, _ = handleRate(ctx)
+			gGitHubMtx.Unlock()
+			retry = true
+			continue
+		}
+		if e != nil {
+			err = e
+			return
+		}
+		if usr != nil {
+			user = map[string]*string{"name": usr.Name, "email": usr.Email, "company": usr.Company, "location": usr.Location}
+			found = true
+		}
+		break
+	}
+	gGitHubUsersMtx.Lock()
+	gGitHubUsers[login] = user
+	gGitHubUsersMtx.Unlock()
 	return
 }
 
@@ -218,6 +292,7 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 		} else {
 			hint = gHint
 		}
+		// lib.Printf("org: gInit, gHint = %v, %d\n", gInit, gHint)
 		var (
 			optOrg  *github.RepositoryListByOrgOptions
 			optUser *github.RepositoryListOptions
@@ -1031,6 +1106,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		itemType = "pull request"
 	}
 	issueID := strconv.Itoa(issue.ID)
+	now := time.Now()
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, issueID)
 	repo := "https://github.com/" + origin
 	rich["slug"] = ev.GHAFxSlug
@@ -1042,7 +1118,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["tag"] = repo
 	rich["repository"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
-	rich["metadata__timestamp"] = time.Now()
+	rich["metadata__timestamp"] = now
 	rich["uuid"] = uuid
 	rich["id"] = issueID
 	rich["is_github_issue"] = 1
@@ -1056,6 +1132,66 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["time_to_close_days"] = nil
 	} else {
 		rich["time_to_close_days"] = float64(issue.ClosedAt.Sub(issue.CreatedAt).Seconds()) / 86400.0
+	}
+	if issue.State != "closed" {
+		rich["time_open_days"] = float64(now.Sub(issue.CreatedAt).Seconds()) / 86400.0
+	} else {
+		rich["time_open_days"] = rich["time_to_close_days"]
+	}
+	login := issue.User.Login
+	rich["user_login"] = login
+	userData, found, err := getGitHubUser(ctx, login)
+	if err != nil {
+		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, ev)
+		return
+	}
+	if found {
+		rich["user_name"] = userData["name"]
+		rich["author_name"] = userData["name"]
+		if userData["email"] != nil {
+			ary := strings.Split(*userData["email"], "@")
+			if len(ary) > 1 {
+				rich["user_domain"] = ary[1]
+			}
+		} else {
+			rich["user_domain"] = nil
+		}
+		rich["user_org"] = userData["company"]
+		rich["user_location"] = userData["location"]
+		rich["user_geolocation"] = nil
+	} else {
+		lib.Printf("warning: user %s not found\n", login)
+		rich["user_name"] = nil
+		rich["author_name"] = nil
+		rich["user_domain"] = nil
+		rich["user_org"] = nil
+		rich["user_location"] = nil
+		rich["user_geolocation"] = nil
+	}
+	if issue.Assignee != nil {
+		login := issue.Assignee.Login
+		rich["assignee_login"] = login
+		userData, found, err := getGitHubUser(ctx, login)
+		if err != nil {
+			lib.Printf("Cannot get %s assignee info: %+v while processing %+v\n", login, err, ev)
+			return
+		}
+		if found {
+			rich["assignee_name"] = userData["name"]
+			if userData["email"] != nil {
+				ary := strings.Split(*userData["email"], "@")
+				if len(ary) > 1 {
+					rich["assignee_domain"] = ary[1]
+				}
+			} else {
+				rich["assignee_domain"] = nil
+			}
+			rich["assignee_org"] = userData["company"]
+			rich["assignee_location"] = userData["location"]
+			rich["assignee_geolocation"] = nil
+		}
+	}
+	if 1 == 0 {
 		dbg()
 	}
 	addRichItem(ctx, rich)
