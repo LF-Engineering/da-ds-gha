@@ -1184,7 +1184,11 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["item_type"] = itemType
 	rich["metadata__enriched_on"] = time.Now()
 	rich["offset"] = nil
-	rich["github_repo"] = origin
+	githubRepo := origin
+	if strings.HasSuffix(githubRepo, ".git") {
+		githubRepo = githubRepo[:len(githubRepo)-4]
+	}
+	rich["github_repo"] = githubRepo
 	rich["old_fmt"] = false
 	if issue.ClosedAt == nil {
 		rich["time_to_close_days"] = nil
@@ -1251,7 +1255,20 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	rich["id"] = issue.ID
 	rich["id_in_repo"] = issue.Number
-	if 1 == 0 {
+	rich["title"] = issue.Title
+	rich["title_analyzed"] = issue.Title
+	rich["state"] = issue.State
+	rich["created_at"] = issue.State
+	rich["updated_at"] = issue.State
+	sNumber := strconv.Itoa(issue.Number)
+	rich["url"] = repo + "/issues/" + sNumber
+	rich["url_id"] = githubRepo + "/issues/" + sNumber
+	labels := []string{}
+	for _, label := range issue.Labels {
+		labels = append(labels, label.Name)
+	}
+	rich["labels"] = labels
+	if 1 == 1 {
 		dbg()
 	}
 	addRichItem(ctx, rich)
