@@ -66,8 +66,8 @@ var (
 	gNewFormatStarts   = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
 	gMinGHA            = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
 	gGitHubUsers       = map[string]map[string]*string{}
-	gGitHubUsersMtx    = &sync.RWMutex{}
-	gGitHubMtx         = &sync.RWMutex{}
+	gGitHubUsersMtx    *sync.RWMutex
+	gGitHubMtx         *sync.RWMutex
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -124,12 +124,16 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 		cacheSize int
 	)
 	// Try memory cache 1st
-	gGitHubUsersMtx.RLock()
+	if gGitHubUsersMtx != nil {
+		gGitHubUsersMtx.RLock()
+	}
 	user, ok = gGitHubUsers[login]
 	if ctx.Debug > 0 {
 		cacheSize = len(gGitHubUsers)
 	}
-	gGitHubUsersMtx.RUnlock()
+	if gGitHubUsersMtx != nil {
+		gGitHubUsersMtx.RUnlock()
+	}
 	if ok {
 		found = len(user) > 0
 		if ctx.Debug > 0 {
@@ -151,9 +155,13 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 			if ctx.Debug > 0 {
 				lib.Printf("getGitHubUser(%d): file cache hit: %s\n", cacheSize, login)
 			}
-			gGitHubUsersMtx.Lock()
+			if gGitHubUsersMtx != nil {
+				gGitHubUsersMtx.Lock()
+			}
 			gGitHubUsers[login] = user
-			gGitHubUsersMtx.Unlock()
+			if gGitHubUsersMtx != nil {
+				gGitHubUsersMtx.Unlock()
+			}
 			return
 		}
 		lib.Printf("getGitHubUser: cannot unmarshal %s cache file: %v\n", path, e)
@@ -183,23 +191,31 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 	}()
 	// Try GitHub API 3rd
 	var c *github.Client
-	gGitHubMtx.RLock()
+	if gGitHubMtx != nil {
+		gGitHubMtx.RLock()
+	}
 	if !gInit || gHint < 0 {
-		gGitHubMtx.RUnlock()
 		if ctx.Debug > 0 {
 			lib.Printf("getGitHubUser: init\n")
 		}
-		gGitHubMtx.Lock()
+		if gGitHubMtx != nil {
+			gGitHubMtx.RUnlock()
+			gGitHubMtx.Lock()
+		}
 		if !gInit {
 			gctx, gc = lib.GHClient(ctx)
 			gInit = true
 		}
 		gHint, _ = handleRate(ctx)
 		c = gc[gHint]
-		gGitHubMtx.Unlock()
+		if gGitHubMtx != nil {
+			gGitHubMtx.Unlock()
+		}
 	} else {
 		c = gc[gHint]
-		gGitHubMtx.RUnlock()
+		if gGitHubMtx != nil {
+			gGitHubMtx.RUnlock()
+		}
 		if ctx.Debug > 0 {
 			lib.Printf("getGitHubUser: reuse\n")
 		}
@@ -217,17 +233,25 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 		usr, response, e = c.Users.Get(gctx, login)
 		// lib.Printf("GET %s -> {%+v, %+v, %+v}\n", login, usr, response, e)
 		if e != nil && strings.Contains(e.Error(), "404 Not Found") {
-			gGitHubUsersMtx.Lock()
+			if gGitHubUsersMtx != nil {
+				gGitHubUsersMtx.Lock()
+			}
 			gGitHubUsers[login] = map[string]*string{}
-			gGitHubUsersMtx.Unlock()
+			if gGitHubUsersMtx != nil {
+				gGitHubUsersMtx.Unlock()
+			}
 			return
 		}
 		if e != nil && !retry {
 			lib.Printf("Error getting %s user: response: %+v, error: %+v, retrying rate\n", login, response, e)
 			lib.Printf("getGitHubUser: handle rate\n")
-			gGitHubMtx.Lock()
+			if gGitHubMtx != nil {
+				gGitHubMtx.Lock()
+			}
 			gHint, _ = handleRate(ctx)
-			gGitHubMtx.Unlock()
+			if gGitHubMtx != nil {
+				gGitHubMtx.Unlock()
+			}
 			retry = true
 			continue
 		}
@@ -241,9 +265,13 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 		}
 		break
 	}
-	gGitHubUsersMtx.Lock()
+	if gGitHubUsersMtx != nil {
+		gGitHubUsersMtx.Lock()
+	}
 	gGitHubUsers[login] = user
-	gGitHubUsersMtx.Unlock()
+	if gGitHubUsersMtx != nil {
+		gGitHubUsersMtx.Unlock()
+	}
 	return
 }
 
@@ -1279,6 +1307,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	// FIXME: we don't have this information in GHA
 	// rich["time_to_first_attention"]
+	// FIXME handle affiliations here
 	if 1 == 1 {
 		dbg()
 	}
@@ -3177,6 +3206,8 @@ func handleMT(ctx *lib.Ctx) {
 		gRichMtx = &sync.Mutex{}
 		gEnsuredIndicesMtx = &sync.Mutex{}
 		gUploadMtx = &sync.Mutex{}
+		gGitHubUsersMtx = &sync.RWMutex{}
+		gGitHubMtx = &sync.RWMutex{}
 		dads.SetMT()
 	}
 }
