@@ -1088,7 +1088,13 @@ func uploadRichItems(ctx *lib.Ctx, async bool) {
 			}
 		}()
 	} else {
+		if gUploadMtx != nil {
+			gUploadMtx.Lock()
+		}
 		err := uploadToES(ctx, items)
+		if gUploadMtx != nil {
+			gUploadMtx.Unlock()
+		}
 		if err != nil {
 			lib.Printf("uploadToES: %+v\n", err)
 		}
@@ -1378,7 +1384,13 @@ func uploadIdentities(ctx *lib.Ctx, pctx *dads.Ctx, async bool) {
 			}
 		}()
 	} else {
+		if gUploadDBMtx != nil {
+			gUploadDBMtx.Lock()
+		}
 		err := uploadToDB(ctx, pctx, items)
+		if gUploadDBMtx != nil {
+			gUploadDBMtx.Unlock()
+		}
 		if err != nil {
 			lib.Printf("uploadToDB: %+v\n", err)
 		}
@@ -1482,8 +1494,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		// return
 	}
 	rich := make(map[string]interface{})
+	// FIXME
 	dbg := func() {
-		// TODO: continue Issue enrich here
 		pretty, _ := jsoniter.MarshalIndent(ev, "", "  ")
 		fmt.Printf("\n\n%+v\n\n", string(pretty))
 		pretty, _ = jsoniter.MarshalIndent(rich, "", "  ")
@@ -1570,7 +1582,9 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 		roles = append(roles, "user_data")
 	} else {
-		lib.Printf("warning: user %s not found\n", login)
+		if ctx.Debug > 0 {
+			lib.Printf("warning: user %s not found\n", login)
+		}
 		rich["user_name"] = nil
 		rich["author_name"] = nil
 		rich["user_domain"] = nil
@@ -1578,6 +1592,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["user_location"] = nil
 		rich["user_geolocation"] = nil
 	}
+	foundAssignee := false
 	if issue.Assignee != nil {
 		login := issue.Assignee.Login
 		rich["assignee_login"] = login
@@ -1610,7 +1625,17 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			addIdentity(ctx, identity)
 			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 			roles = append(roles, "assignee_data")
+			foundAssignee = true
+		} else if ctx.Debug > 0 {
+			lib.Printf("warning: user %s not found\n", login)
 		}
+	}
+	if !foundAssignee {
+		rich["assignee_name"] = nil
+		rich["assignee_domain"] = nil
+		rich["assignee_org"] = nil
+		rich["assignee_location"] = nil
+		rich["assignee_geolocation"] = nil
 	}
 	rich["id"] = issue.ID
 	rich["id_in_repo"] = issue.Number
@@ -1654,7 +1679,9 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 				name, _ := identity["name"].(string)
 				username, _ := identity["username"].(string)
 				id := dads.UUIDAffs(pctx, "github", email, name, username)
-				lib.Printf("no identity affiliation data for identity %+v -> pending %s\n", identity, id)
+				if ctx.Debug > 0 {
+					lib.Printf("no identity affiliation data for identity %+v -> pending %s\n", identity, id)
+				}
 				if name == "none" {
 					name = ""
 				}
@@ -1695,7 +1722,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			rich[orgsKey] = []interface{}{}
 		}
 		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
-		if 1 == 1 {
+		// FIXME
+		if 0 == 1 {
 			fmt.Printf("identities: %+v\nroles: %+v\nAffsItems: %+v\n", identities, roles, affsItems)
 			dbg()
 		}
