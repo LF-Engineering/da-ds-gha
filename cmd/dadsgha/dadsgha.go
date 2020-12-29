@@ -74,6 +74,7 @@ var (
 	gGitHubUsers        = map[string]map[string]*string{}
 	gIdentities         = map[[3]string]struct{}{}
 	gUploadedIdentities = map[[3]string]struct{}{}
+	gGitHubDS           = &dads.DSStub{DS: "github"}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -911,6 +912,7 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 		doc []byte
 		hdr []byte
 	)
+	defer func() { runGC() }()
 	for _, item := range items {
 		doc, err = jsoniter.Marshal(item)
 		if err != nil {
@@ -1126,6 +1128,7 @@ func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 	if e != nil {
 		return
 	}
+	defer func() { runGC() }()
 	nIdents := len(items)
 	source := "github"
 	run := func(bulk bool) (retry bool, err error) {
@@ -1496,6 +1499,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	now := time.Now()
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, issueID)
 	repo := "https://github.com/" + origin
+	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
@@ -1540,6 +1544,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	// name, username, email
 	identity := [3]string{"none", login, "none"}
+	identities := []map[string]interface{}{}
+	roles := []string{}
 	if found {
 		name := userData["name"]
 		email := userData["email"]
@@ -1560,6 +1566,9 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["user_org"] = userData["company"]
 		rich["user_location"] = userData["location"]
 		rich["user_geolocation"] = nil
+		addIdentity(ctx, identity)
+		identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+		roles = append(roles, "user_data")
 	} else {
 		lib.Printf("warning: user %s not found\n", login)
 		rich["user_name"] = nil
@@ -1568,7 +1577,6 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["user_org"] = nil
 		rich["user_location"] = nil
 		rich["user_geolocation"] = nil
-		addIdentity(ctx, identity)
 	}
 	if issue.Assignee != nil {
 		login := issue.Assignee.Login
@@ -1600,6 +1608,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			rich["assignee_location"] = userData["location"]
 			rich["assignee_geolocation"] = nil
 			addIdentity(ctx, identity)
+			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+			roles = append(roles, "assignee_data")
 		}
 	}
 	rich["id"] = issue.ID
@@ -1607,8 +1617,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["title"] = issue.Title
 	rich["title_analyzed"] = issue.Title
 	rich["state"] = issue.State
-	rich["created_at"] = issue.State
-	rich["updated_at"] = issue.State
+	rich["created_at"] = issue.CreatedAt
+	rich["updated_at"] = issue.UpdatedAt
 	sNumber := strconv.Itoa(issue.Number)
 	rich["url"] = repo + "/issues/" + sNumber
 	rich["url_id"] = githubRepo + "/issues/" + sNumber
@@ -1626,9 +1636,66 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	// FIXME: we don't have this information in GHA
 	// rich["time_to_first_attention"]
-	// FIXME handle affiliations here
-	if 1 == 0 {
-		dbg()
+	// Affiliations
+	if len(identities) > 0 {
+		// FIXME DebugSQL
+		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, Debug: ctx.Debug, DebugSQL: 2}
+		dt := ev.CreatedAt
+		authorKey := "user_data"
+		affsItems := make(map[string]interface{})
+		for i, identity := range identities {
+			role := roles[i]
+			affsIdentity, empty := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+			if empty {
+				email, _ := identity["email"].(string)
+				name, _ := identity["name"].(string)
+				username, _ := identity["username"].(string)
+				id := dads.UUIDAffs(pctx, "github", email, name, username)
+				lib.Printf("no identity affiliation data for identity %+v -> pending %s\n", identity, id)
+				if name == "none" {
+					name = ""
+				}
+				if username == "none" {
+					username = ""
+				}
+				affsIdentity[role+"_id"] = id
+				affsIdentity[role+"_uuid"] = id
+				affsIdentity[role+"_name"] = name
+				affsIdentity[role+"_user_name"] = username
+				affsIdentity[role+"_domain"] = dads.IdentityAffsDomain(identity)
+				affsIdentity[role+"_gender"] = dads.Unknown
+				affsIdentity[role+"_gender_acc"] = nil
+				affsIdentity[role+"_org_name"] = dads.Unknown
+				affsIdentity[role+"_bot"] = false
+				affsIdentity[role+dads.MultiOrgNames] = []interface{}{dads.Unknown}
+			}
+			for prop, value := range affsIdentity {
+				affsItems[prop] = value
+			}
+			for _, suff := range dads.RequiredAffsFields {
+				k := role + suff
+				_, ok := affsIdentity[k]
+				if !ok {
+					affsIdentity[k] = dads.Unknown
+				}
+			}
+		}
+		for prop, value := range affsItems {
+			rich[prop] = value
+		}
+		for _, suff := range dads.AffsFields {
+			rich["author"+suff] = rich[authorKey+suff]
+		}
+		orgsKey := authorKey + dads.MultiOrgNames
+		_, ok = rich[orgsKey]
+		if !ok {
+			rich[orgsKey] = []interface{}{}
+		}
+		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
+		if 1 == 1 {
+			fmt.Printf("identities: %+v\nroles: %+v\nAffsItems: %+v\n", identities, roles, affsItems)
+			dbg()
+		}
 	}
 	addRichItem(ctx, rich)
 	processed = true
@@ -1668,6 +1735,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[str
 	prID := strconv.Itoa(ev.Payload.PullRequest.ID)
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, prID)
 	repo := "https://github.com/" + origin
+	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
@@ -1725,6 +1793,7 @@ func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates m
 	prID := strconv.Itoa(ev.Payload.PullRequest.ID)
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, prID)
 	repo := "https://github.com/" + origin
+	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
@@ -1781,6 +1850,7 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[s
 	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	repo := "https://github.com/" + origin
+	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
@@ -1843,6 +1913,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	repo := "https://github.com/" + origin
+	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
