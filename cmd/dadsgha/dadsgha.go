@@ -3557,6 +3557,15 @@ func initDadsCtx(ctx *lib.Ctx) {
 	dads.ConnectAffiliationsDB(&gDadsCtx)
 }
 
+func cacheStats() {
+	gDadsCtx.Debug = 1
+	dads.CacheSummary(&gDadsCtx)
+	lib.Printf("docs uploaded: %d\n", gDocsUploaded)
+	lib.Printf("indices: %d\n", len(gEnsuredIndices))
+	lib.Printf("GitHub users: %d\n", len(gGitHubUsers))
+	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
+}
+
 func main() {
 	var ctx lib.Ctx
 	dtStart := time.Now()
@@ -3588,5 +3597,6 @@ func main() {
 	}
 	gha(&ctx, incremental, config, startDates)
 	dtEnd := time.Now()
+	cacheStats()
 	lib.Printf("Uploaded: %d, took: %v\n", gDocsUploaded, dtEnd.Sub(dtStart))
 }
