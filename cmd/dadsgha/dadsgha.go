@@ -1502,8 +1502,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
-		// FIXME: uncomment
-		// return
+		return
 	}
 	rich := make(map[string]interface{})
 	isPullRequest := ev.Payload.PullRequest != nil
@@ -1540,7 +1539,6 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	rich["github_repo"] = githubRepo
 	rich["old_fmt"] = false
-	rich["closed_at"] = issue.ClosedAt
 	if issue.ClosedAt == nil {
 		rich["time_to_close_days"] = nil
 	} else {
@@ -1587,7 +1585,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		roles = append(roles, "user_data")
 	} else {
 		if ctx.Debug > 0 {
-			lib.Printf("warning: user %s not found\n", login)
+			lib.Printf("warning: issue user %s not found\n", login)
 		}
 		rich["user_name"] = nil
 		rich["author_name"] = nil
@@ -1631,7 +1629,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			roles = append(roles, "assignee_data")
 			foundAssignee = true
 		} else if ctx.Debug > 0 {
-			lib.Printf("warning: user %s not found\n", login)
+			lib.Printf("warning: issue assignee %s not found\n", login)
 		}
 	}
 	if !foundAssignee {
@@ -1647,6 +1645,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["title_analyzed"] = issue.Title
 	rich["state"] = issue.State
 	rich["created_at"] = issue.CreatedAt
+	rich["closed_at"] = issue.ClosedAt
 	rich["updated_at"] = issue.UpdatedAt
 	sNumber := strconv.Itoa(issue.Number)
 	rich["url"] = repo + "/issues/" + sNumber
@@ -1732,69 +1731,24 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	return
 }
 
-func enrichPRData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[string]map[string]time.Time) (processed bool) {
+func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string, startDates map[string]map[string]time.Time) (processed bool) {
 	//  Possible PR event types:
 	//  PullRequestEvent
 	//  PullRequestReviewCommentEvent
 	//  PullRequestReviewEvent
-	if ev.Payload.PullRequest == nil {
-		lib.Printf("Missing PR object in %+v\n", ev)
-		return
-	}
-	fSlug := ev.GHAFxSlug
-	suff, ok := ev.GHASuffMap["pull_request"]
-	if !ok {
-		if ctx.Debug > 0 {
-			lib.Printf("%s: pull request not configured\n", origin)
+	oldFmt := false
+	if ev == nil {
+		oldFmt = true
+		ev = &lib.Event{
+			Payload:    lib.Payload{PullRequest: evo.Payload.PullRequest},
+			GHAFxSlug:  evo.GHAFxSlug,
+			GHASuffMap: evo.GHASuffMap,
+			GHAProj:    evo.GHAProj,
+			GHADt:      evo.GHADt,
+			CreatedAt:  evo.CreatedAt,
+			Type:       evo.Type,
 		}
-		return
 	}
-	idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-pull_request" + suff
-	var startDate time.Time
-	indexStartDates, ok := startDates[idx]
-	if ok {
-		startDate, ok = indexStartDates[origin]
-	}
-	if ok && !startDate.Before(ev.CreatedAt) {
-		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
-		}
-		return
-	}
-	rich := make(map[string]interface{})
-	prID := strconv.Itoa(ev.Payload.PullRequest.ID)
-	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, prID)
-	repo := "https://github.com/" + origin
-	rich["event_type"] = ev.Type
-	rich["slug"] = ev.GHAFxSlug
-	rich["index"] = idx
-	rich["project"] = ev.GHAProj
-	rich["project_ts"] = time.Now().Unix()
-	rich["gha_hour"] = ev.GHADt
-	rich["origin"] = repo
-	rich["tag"] = repo
-	rich["repository"] = repo
-	rich["metadata__updated_on"] = ev.CreatedAt
-	rich["uuid"] = uuid
-	rich["id"] = prID
-	rich["is_github_pull_request"] = 1
-	rich["pull_request"] = true
-	rich["item_type"] = "pull request"
-	rich["metadata__enriched_on"] = time.Now()
-	rich["offset"] = nil
-	rich["github_repo"] = origin
-	rich["old_fmt"] = false
-	addRichItem(ctx, rich)
-	// TODO: continue PR enrich here
-	processed = true
-	return
-}
-
-func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates map[string]map[string]time.Time) (processed bool) {
-	//  Possible PR event types:
-	//  PullRequestEvent
-	//  PullRequestReviewCommentEvent
-	//  PullRequestReviewEvent
 	if ev.Payload.PullRequest == nil {
 		lib.Printf("Missing PR object (old format) in %+v\n", ev)
 		return
@@ -1821,7 +1775,9 @@ func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates m
 		// return
 	}
 	rich := make(map[string]interface{})
-	prID := strconv.Itoa(ev.Payload.PullRequest.ID)
+	now := time.Now()
+	pr := ev.Payload.PullRequest
+	prID := strconv.Itoa(pr.ID)
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, prID)
 	repo := "https://github.com/" + origin
 	rich["event_type"] = ev.Type
@@ -1840,9 +1796,198 @@ func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates m
 	rich["pull_request"] = true
 	rich["item_type"] = "pull request"
 	rich["metadata__enriched_on"] = time.Now()
+	rich["metadata__timestamp"] = now
 	rich["offset"] = nil
-	rich["github_repo"] = origin
-	rich["old_fmt"] = true
+	githubRepo := origin
+	if strings.HasSuffix(githubRepo, ".git") {
+		githubRepo = githubRepo[:len(githubRepo)-4]
+	}
+	rich["github_repo"] = githubRepo
+	rich["old_fmt"] = oldFmt
+	if pr.ClosedAt == nil {
+		rich["time_to_close_days"] = nil
+	} else {
+		rich["time_to_close_days"] = float64(pr.ClosedAt.Sub(pr.CreatedAt).Seconds()) / 86400.0
+	}
+	if pr.State != "closed" {
+		rich["time_open_days"] = float64(now.Sub(pr.CreatedAt).Seconds()) / 86400.0
+	} else {
+		rich["time_open_days"] = rich["time_to_close_days"]
+	}
+	login := pr.User.Login
+	rich["user_login"] = login
+	userData, found, err := getGitHubUser(ctx, login)
+	if err != nil {
+		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, ev)
+		return
+	}
+	// name, username, email
+	identity := [3]string{"none", login, "none"}
+	identities := []map[string]interface{}{}
+	roles := []string{}
+	if found {
+		name := userData["name"]
+		email := userData["email"]
+		if name != nil {
+			identity[0] = *name
+		}
+		rich["user_name"] = name
+		rich["author_name"] = name
+		if email != nil {
+			identity[2] = *email
+			ary := strings.Split(*email, "@")
+			if len(ary) > 1 {
+				rich["user_domain"] = ary[1]
+			}
+		} else {
+			rich["user_domain"] = nil
+		}
+		rich["user_org"] = userData["company"]
+		rich["user_location"] = userData["location"]
+		rich["user_geolocation"] = nil
+		addIdentity(ctx, identity)
+		identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+		roles = append(roles, "user_data")
+	} else {
+		if ctx.Debug > 0 {
+			lib.Printf("warning: pr user %s not found\n", login)
+		}
+		rich["user_name"] = nil
+		rich["author_name"] = nil
+		rich["user_domain"] = nil
+		rich["user_org"] = nil
+		rich["user_location"] = nil
+		rich["user_geolocation"] = nil
+	}
+	foundMergedBy := false
+	if pr.MergedBy != nil {
+		login := pr.MergedBy.Login
+		rich["merged_by_login"] = login
+		userData, found, err := getGitHubUser(ctx, login)
+		if err != nil {
+			lib.Printf("Cannot get %s merged_by info: %+v while processing %+v\n", login, err, ev)
+			return
+		}
+		if found {
+			// name, username, email
+			identity := [3]string{"none", login, "none"}
+			name := userData["name"]
+			email := userData["email"]
+			rich["merged_by_name"] = name
+			if name != nil {
+				identity[0] = *name
+			}
+			if email != nil {
+				identity[2] = *email
+				ary := strings.Split(*email, "@")
+				if len(ary) > 1 {
+					rich["merged_by_domain"] = ary[1]
+				}
+			} else {
+				rich["merged_by_domain"] = nil
+			}
+			rich["merged_by_org"] = userData["company"]
+			rich["merged_by_location"] = userData["location"]
+			rich["merged_by_geolocation"] = nil
+			addIdentity(ctx, identity)
+			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+			roles = append(roles, "merged_by_data")
+			foundMergedBy = true
+		} else if ctx.Debug > 0 {
+			lib.Printf("warning: pr merged_by %s not found\n", login)
+		}
+	}
+	if !foundMergedBy {
+		rich["merged_by_name"] = nil
+		rich["merged_by_domain"] = nil
+		rich["merged_by_org"] = nil
+		rich["merged_by_location"] = nil
+		rich["merged_by_geolocation"] = nil
+	}
+	if pr.RequestedReviewers != nil {
+		for i, reviewer := range *pr.RequestedReviewers {
+			login := reviewer.Login
+			role := "requested_reviewer"
+			if i > 0 {
+				role += "_" + strconv.Itoa(i+1)
+			}
+			rich[role+"_login"] = login
+			userData, found, err := getGitHubUser(ctx, login)
+			if err != nil {
+				lib.Printf("Cannot get %s %s info: %+v while processing %+v\n", login, role, err, ev)
+				return
+			}
+			if found {
+				// name, username, email
+				identity := [3]string{"none", login, "none"}
+				name := userData["name"]
+				email := userData["email"]
+				rich[role+"_name"] = name
+				if name != nil {
+					identity[0] = *name
+				}
+				if email != nil {
+					identity[2] = *email
+					ary := strings.Split(*email, "@")
+					if len(ary) > 1 {
+						rich[role+"_domain"] = ary[1]
+					}
+				} else {
+					rich[role+"_domain"] = nil
+				}
+				rich[role+"_org"] = userData["company"]
+				rich[role+"_location"] = userData["location"]
+				rich[role+"_geolocation"] = nil
+				addIdentity(ctx, identity)
+				identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+				roles = append(roles, role)
+			} else if ctx.Debug > 0 {
+				lib.Printf("warning: pr %s user %s not found\n", role, login)
+			}
+		}
+	}
+	rich["id"] = pr.ID
+	rich["id_in_repo"] = pr.Number
+	rich["title"] = pr.Title
+	rich["title_analyzed"] = pr.Title
+	rich["state"] = pr.State
+	rich["created_at"] = pr.CreatedAt
+	rich["closed_at"] = pr.ClosedAt
+	rich["updated_at"] = pr.UpdatedAt
+	rich["merged_at"] = pr.MergedAt
+	rich["merged"] = pr.Merged
+	sNumber := strconv.Itoa(pr.Number)
+	rich["url"] = repo + "/pull/" + sNumber
+	rich["url_id"] = githubRepo + "/pull/" + sNumber
+	labels := []string{}
+	// FIXME: we don't have labels in GHA events for PR - labels are on the PR's corresponding issue
+	rich["labels"] = labels
+	rich["comments"] = pr.Comments
+	rich["num_review_comments"] = pr.ReviewComments
+	rich["locked"] = pr.Locked
+	if pr.Milestone != nil {
+		rich["milestone"] = pr.Milestone.Name
+	} else {
+		rich["milestone"] = nil
+	}
+	rich["commits"] = pr.Commits
+	rich["additions"] = pr.Additions
+	rich["deletions"] = pr.Deletions
+	rich["changed_files"] = pr.ChangedFiles
+	rich["pull_request"] = true
+	if pr.Base.Repo != nil {
+		rich["forks"] = pr.Base.Repo.Forks
+	} else {
+		rich["forks"] = nil
+	}
+	if pr.MergedAt == nil {
+		rich["code_merge_duration"] = nil
+	} else {
+		rich["code_merge_duration"] = float64(pr.MergedAt.Sub(pr.CreatedAt).Seconds()) / 86400.0
+	}
+	// FIXME: we don't have this information in GHA
+	// rich["time_to_merge_request_response"]
+	// Affiliations
 	dbg := func() {
 		pretty, _ := jsoniter.MarshalIndent(ev, "", "  ")
 		fmt.Printf("\n\n%+v\n\n", string(pretty))
@@ -1850,8 +1995,8 @@ func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates m
 		fmt.Printf("\n\n%+v\n\n", string(pretty))
 		os.Exit(1)
 	}
-	// TODO: continue old PR enrich here
-	if 1 == 0 {
+	// FIXME: continue old PR enrich here
+	if 1 == 1 {
 		dbg()
 	}
 	addRichItem(ctx, rich)
@@ -2012,7 +2157,7 @@ func enrichData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[strin
 			processed++
 		}
 	case "PullRequestEvent", "PullRequestReviewEvent", "PullRequestReviewCommentEvent":
-		if enrichPRData(ctx, ev, origin, startDates) {
+		if enrichPRData(ctx, ev, nil, origin, startDates) {
 			processed++
 		}
 		if enrichRepoData(ctx, ev, origin, startDates) {
@@ -2026,7 +2171,7 @@ func enrichDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates map
 	// we don't have enought data to enrich issue type object In pre-2015 event format
 	switch ev.Type {
 	case "PullRequestEvent", "PullRequestReviewEvent", "PullRequestReviewCommentEvent":
-		if enrichPRDataOld(ctx, ev, origin, startDates) {
+		if enrichPRData(ctx, nil, ev, origin, startDates) {
 			processed++
 		}
 	}
