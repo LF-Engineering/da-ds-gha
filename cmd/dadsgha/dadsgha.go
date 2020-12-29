@@ -1683,7 +1683,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 				username, _ := identity["username"].(string)
 				id := dads.UUIDAffs(pctx, "github", email, name, username)
 				if ctx.Debug > 0 {
-					lib.Printf("no identity affiliation data for identity %+v -> pending %s\n", identity, id)
+					lib.Printf("no issue identity affiliation data for %s identity %+v -> pending %s\n", role, identity, id)
 				}
 				if name == "none" {
 					name = ""
@@ -1850,7 +1850,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		roles = append(roles, "user_data")
 	} else {
 		if ctx.Debug > 0 {
-			lib.Printf("warning: pr user %s not found\n", login)
+			lib.Printf("warning: PR user %s not found\n", login)
 		}
 		rich["user_name"] = nil
 		rich["author_name"] = nil
@@ -1894,7 +1894,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			roles = append(roles, "merged_by_data")
 			foundMergedBy = true
 		} else if ctx.Debug > 0 {
-			lib.Printf("warning: pr merged_by %s not found\n", login)
+			lib.Printf("warning: PR merged_by %s not found\n", login)
 		}
 	}
 	if !foundMergedBy {
@@ -1904,6 +1904,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		rich["merged_by_location"] = nil
 		rich["merged_by_geolocation"] = nil
 	}
+	reviewers := []string{}
 	if pr.RequestedReviewers != nil {
 		for i, reviewer := range *pr.RequestedReviewers {
 			login := reviewer.Login
@@ -1941,11 +1942,13 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 				addIdentity(ctx, identity)
 				identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 				roles = append(roles, role)
+				reviewers = append(reviewers, login)
 			} else if ctx.Debug > 0 {
-				lib.Printf("warning: pr %s user %s not found\n", role, login)
+				lib.Printf("warning: PR %s user %s not found\n", role, login)
 			}
 		}
 	}
+	rich["reviewers"] = reviewers
 	rich["id"] = pr.ID
 	rich["id_in_repo"] = pr.Number
 	rich["title"] = pr.Title
@@ -1988,16 +1991,66 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	// FIXME: we don't have this information in GHA
 	// rich["time_to_merge_request_response"]
 	// Affiliations
-	dbg := func() {
-		pretty, _ := jsoniter.MarshalIndent(ev, "", "  ")
-		fmt.Printf("\n\n%+v\n\n", string(pretty))
-		pretty, _ = jsoniter.MarshalIndent(rich, "", "  ")
-		fmt.Printf("\n\n%+v\n\n", string(pretty))
-		os.Exit(1)
-	}
-	// FIXME: continue old PR enrich here
-	if 1 == 1 {
-		dbg()
+	if len(identities) > 0 {
+		debugSQL := 0
+		if ctx.Debug > 0 {
+			debugSQL = 2
+		}
+		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, Debug: ctx.Debug, DebugSQL: debugSQL}
+		dt := ev.CreatedAt
+		authorKey := "user_data"
+		affsItems := make(map[string]interface{})
+		for i, identity := range identities {
+			role := roles[i]
+			affsIdentity, empty := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+			if empty {
+				email, _ := identity["email"].(string)
+				name, _ := identity["name"].(string)
+				username, _ := identity["username"].(string)
+				id := dads.UUIDAffs(pctx, "github", email, name, username)
+				if ctx.Debug > 0 {
+					lib.Printf("no PR identity affiliation data for %s identity %+v -> pending %s\n", role, identity, id)
+				}
+				if name == "none" {
+					name = ""
+				}
+				if username == "none" {
+					username = ""
+				}
+				affsIdentity[role+"_id"] = id
+				affsIdentity[role+"_uuid"] = id
+				affsIdentity[role+"_name"] = name
+				affsIdentity[role+"_user_name"] = username
+				affsIdentity[role+"_domain"] = dads.IdentityAffsDomain(identity)
+				affsIdentity[role+"_gender"] = dads.Unknown
+				affsIdentity[role+"_gender_acc"] = nil
+				affsIdentity[role+"_org_name"] = dads.Unknown
+				affsIdentity[role+"_bot"] = false
+				affsIdentity[role+dads.MultiOrgNames] = []interface{}{dads.Unknown}
+			}
+			for prop, value := range affsIdentity {
+				affsItems[prop] = value
+			}
+			for _, suff := range dads.RequiredAffsFields {
+				k := role + suff
+				_, ok := affsIdentity[k]
+				if !ok {
+					affsIdentity[k] = dads.Unknown
+				}
+			}
+		}
+		for prop, value := range affsItems {
+			rich[prop] = value
+		}
+		for _, suff := range dads.AffsFields {
+			rich["author"+suff] = rich[authorKey+suff]
+		}
+		orgsKey := authorKey + dads.MultiOrgNames
+		_, ok = rich[orgsKey]
+		if !ok {
+			rich[orgsKey] = []interface{}{}
+		}
+		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
 	}
 	addRichItem(ctx, rich)
 	processed = true
