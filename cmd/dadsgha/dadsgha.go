@@ -1638,8 +1638,11 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	// rich["time_to_first_attention"]
 	// Affiliations
 	if len(identities) > 0 {
-		// FIXME DebugSQL
-		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, Debug: ctx.Debug, DebugSQL: 2}
+		debugSQL := 0
+		if ctx.Debug > 0 {
+			debugSQL = 2
+		}
+		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, Debug: ctx.Debug, DebugSQL: debugSQL}
 		dt := ev.CreatedAt
 		authorKey := "user_data"
 		affsItems := make(map[string]interface{})
