@@ -1771,8 +1771,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
-		// FIXME: uncomment this
-		// return
+		return
 	}
 	rich := make(map[string]interface{})
 	now := time.Now()
