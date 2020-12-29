@@ -902,7 +902,7 @@ func prettyPrint(data interface{}) string {
 }
 
 func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
-	// FIXME/TODO: connect s3 retry mechanism
+	// TODO: connect s3 retry mechanism
 	nItems := len(items)
 	lib.Printf("bulk uploading %d documents\n", nItems)
 	url := ctx.ESURL + "/_bulk?refresh=wait_for"
@@ -1150,8 +1150,14 @@ func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 					_ = tx.Rollback()
 					retry = true
 				} else {
+					if gIdentityMtx != nil {
+						gIdentityMtx.Lock()
+					}
 					for _, item := range items {
 						gUploadedIdentities[item] = struct{}{}
+					}
+					if gIdentityMtx != nil {
+						gIdentityMtx.Unlock()
 					}
 					if ctx.Debug > 0 {
 						lib.Printf("bulk uploaded %d identities\n", len(items))
@@ -1345,7 +1351,13 @@ func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 				if err != nil {
 					return
 				}
+				if gIdentityMtx != nil {
+					gIdentityMtx.Lock()
+				}
 				gUploadedIdentities[ident] = struct{}{}
+				if gIdentityMtx != nil {
+					gIdentityMtx.Unlock()
+				}
 				itx = nil
 			}
 		}
@@ -1494,14 +1506,6 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		// return
 	}
 	rich := make(map[string]interface{})
-	// FIXME
-	dbg := func() {
-		pretty, _ := jsoniter.MarshalIndent(ev, "", "  ")
-		fmt.Printf("\n\n%+v\n\n", string(pretty))
-		pretty, _ = jsoniter.MarshalIndent(rich, "", "  ")
-		fmt.Printf("\n\n%+v\n\n", string(pretty))
-		os.Exit(1)
-	}
 	isPullRequest := ev.Payload.PullRequest != nil
 	itemType := "issue"
 	if isPullRequest {
@@ -1722,11 +1726,6 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			rich[orgsKey] = []interface{}{}
 		}
 		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
-		// FIXME
-		if 0 == 1 {
-			fmt.Printf("identities: %+v\nroles: %+v\nAffsItems: %+v\n", identities, roles, affsItems)
-			dbg()
-		}
 	}
 	addRichItem(ctx, rich)
 	processed = true
@@ -1818,7 +1817,8 @@ func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates m
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
-		return
+		// FIXME: uncomment this
+		// return
 	}
 	rich := make(map[string]interface{})
 	prID := strconv.Itoa(ev.Payload.PullRequest.ID)
@@ -1843,8 +1843,18 @@ func enrichPRDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates m
 	rich["offset"] = nil
 	rich["github_repo"] = origin
 	rich["old_fmt"] = true
-	addRichItem(ctx, rich)
+	dbg := func() {
+		pretty, _ := jsoniter.MarshalIndent(ev, "", "  ")
+		fmt.Printf("\n\n%+v\n\n", string(pretty))
+		pretty, _ = jsoniter.MarshalIndent(rich, "", "  ")
+		fmt.Printf("\n\n%+v\n\n", string(pretty))
+		os.Exit(1)
+	}
 	// TODO: continue old PR enrich here
+	if 1 == 0 {
+		dbg()
+	}
+	addRichItem(ctx, rich)
 	processed = true
 	return
 }
