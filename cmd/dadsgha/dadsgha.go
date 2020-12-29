@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -49,29 +50,30 @@ const (
 )
 
 var (
-	gctx               context.Context
-	gc                 []*github.Client
-	gInit              bool
-	gHint              int
-	gThrN              int
-	gGHAMap            map[string]map[string]int
-	gGHARepoDates      map[string]map[string]int
-	gRichMtx           *sync.Mutex
-	gEnsuredIndicesMtx *sync.Mutex
-	gUploadMtx         *sync.Mutex
-	gUploadDBMtx       *sync.Mutex
-	gDocsUploaded      int64
-	gGitHubUsersMtx    *sync.RWMutex
-	gGitHubMtx         *sync.RWMutex
-	gDadsCtx           dads.Ctx
-	gIdentityMtx       *sync.Mutex
-	gRichItems         = map[string]map[string]interface{}{}
-	gEnsuredIndices    = map[string]struct{}{}
-	githubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
-	gNewFormatStarts   = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
-	gMinGHA            = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
-	gGitHubUsers       = map[string]map[string]*string{}
-	gIdentities        = map[[3]string]struct{}{}
+	gctx                context.Context
+	gc                  []*github.Client
+	gInit               bool
+	gHint               int
+	gThrN               int
+	gGHAMap             map[string]map[string]int
+	gGHARepoDates       map[string]map[string]int
+	gRichMtx            *sync.Mutex
+	gEnsuredIndicesMtx  *sync.Mutex
+	gUploadMtx          *sync.Mutex
+	gUploadDBMtx        *sync.Mutex
+	gDocsUploaded       int64
+	gGitHubUsersMtx     *sync.RWMutex
+	gGitHubMtx          *sync.RWMutex
+	gDadsCtx            dads.Ctx
+	gIdentityMtx        *sync.Mutex
+	gRichItems          = map[string]map[string]interface{}{}
+	gEnsuredIndices     = map[string]struct{}{}
+	githubRichMapping   = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
+	gNewFormatStarts    = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
+	gMinGHA             = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
+	gGitHubUsers        = map[string]map[string]*string{}
+	gIdentities         = map[[3]string]struct{}{}
+	gUploadedIdentities = map[[3]string]struct{}{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -899,7 +901,7 @@ func prettyPrint(data interface{}) string {
 }
 
 func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
-	// TODO: connect s3 retry mechanism
+	// FIXME/TODO: connect s3 retry mechanism
 	nItems := len(items)
 	lib.Printf("bulk uploading %d documents\n", nItems)
 	url := ctx.ESURL + "/_bulk?refresh=wait_for"
@@ -1110,11 +1112,245 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 	uploadRichItems(ctx, true)
 }
 
-func uploadToDB(ctx *lib.Ctx, items [][3]string) (err error) {
+func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
+	if ctx.Debug > 0 {
+		lib.Printf("bulk uploading %d identities\n", len(items))
+	}
+	bulkSize := pctx.DBBulkSize / 6
+	var tx *sql.Tx
+	e = dads.SetDBSessionOrigin(pctx)
+	if e != nil {
+		return
+	}
+	tx, e = pctx.DB.Begin()
+	if e != nil {
+		return
+	}
+	nIdents := len(items)
+	source := "github"
+	run := func(bulk bool) (retry bool, err error) {
+		var (
+			er   error
+			errs []error
+			itx  *sql.Tx
+		)
+		defer func() {
+			if bulk {
+				if tx != nil {
+					lib.Printf("rolling back %d identities insert\n", nIdents)
+					_ = tx.Rollback()
+					retry = true
+				} else {
+					for _, item := range items {
+						gUploadedIdentities[item] = struct{}{}
+					}
+					if ctx.Debug > 0 {
+						lib.Printf("bulk uploaded %d identities\n", len(items))
+					}
+				}
+			} else {
+				lib.Printf("falling back to one-by-one mode for %d items\n", nIdents)
+				defer func() {
+					nErrs := len(errs)
+					if nErrs == 0 {
+						lib.Printf("one-by-one mode for %d items - all succeeded\n", nIdents)
+						return
+					}
+					s := fmt.Sprintf("%d errors: ", nErrs)
+					for _, er := range errs {
+						s += er.Error() + ", "
+					}
+					s = s[:len(s)-2]
+					err = fmt.Errorf("%s", s)
+					lib.Printf("one-by-one mode for %d items: %d errors\n", nIdents, nErrs)
+				}()
+			}
+		}()
+		if ctx.Debug >= 0 {
+			lib.Printf("adding %d identities, bulk %v\n", nIdents, bulk)
+		}
+		if bulk {
+			nPacks := nIdents / bulkSize
+			if nIdents%bulkSize != 0 {
+				nPacks++
+			}
+			for i := 0; i < nPacks; i++ {
+				from := i * bulkSize
+				to := from + bulkSize
+				if to > nIdents {
+					to = nIdents
+				}
+				queryU := "insert ignore into uidentities(uuid,last_modified) values"
+				queryI := "insert ignore into identities(id,source,name,email,username,uuid,last_modified) values"
+				queryP := "insert ignore into profiles(uuid,name,email) values"
+				argsU := []interface{}{}
+				argsI := []interface{}{}
+				argsP := []interface{}{}
+				if ctx.Debug > 0 {
+					lib.Printf("bulk adding idents pack #%d %d-%d (%d/%d)\n", i+1, from, to, to-from, nIdents)
+				}
+				for j := from; j < to; j++ {
+					ident := items[j]
+					name := ident[0]
+					username := ident[1]
+					email := ident[2]
+					var (
+						pname     *string
+						pemail    *string
+						pusername *string
+						profname  *string
+					)
+					if name != "none" {
+						pname = &name
+						profname = &name
+					}
+					if email != "none" {
+						pemail = &email
+					}
+					if username != "none" {
+						pusername = &username
+						if profname == nil {
+							profname = &username
+						}
+					}
+					if pname == nil && pemail == nil && pusername == nil {
+						continue
+					}
+					// if username matches a real email and there is no email set, assume email=username
+					if pemail == nil && pusername != nil && dads.IsValidEmail(username) {
+						pemail = &username
+						email = username
+					}
+					// if name matches a real email and there is no email set, assume email=name
+					if pemail == nil && pname != nil && dads.IsValidEmail(name) {
+						pemail = &name
+						email = name
+					}
+					// uuid(source, email, name, username)
+					uuid := dads.UUIDAffs(pctx, source, email, name, username)
+					queryU += fmt.Sprintf("(?,now()),")
+					queryI += fmt.Sprintf("(?,?,?,?,?,?,now()),")
+					queryP += fmt.Sprintf("(?,?,?),")
+					argsU = append(argsU, uuid)
+					argsI = append(argsI, uuid, source, pname, pemail, pusername, uuid)
+					argsP = append(argsP, uuid, profname, pemail)
+				}
+				queryU = queryU[:len(queryU)-1]
+				queryI = queryI[:len(queryI)-1]
+				queryP = queryP[:len(queryP)-1] // + " on duplicate key update name=values(name),email=values(email),last_modified=now()"
+				_, err = dads.ExecSQL(pctx, tx, queryU, argsU...)
+				if err != nil {
+					return
+				}
+				_, err = dads.ExecSQL(pctx, tx, queryP, argsP...)
+				if err != nil {
+					return
+				}
+				_, err = dads.ExecSQL(pctx, tx, queryI, argsI...)
+				if err != nil {
+					return
+				}
+			}
+			// Will not commit in dry-run mode, deferred function will rollback - so we can still test any errors
+			// but the final commit is replaced with rollback
+			err = tx.Commit()
+			if err != nil {
+				return
+			}
+			tx = nil
+		} else {
+			for i := 0; i < nIdents; i++ {
+				ident := items[i]
+				queryU := "insert ignore into uidentities(uuid,last_modified) values"
+				queryI := "insert ignore into identities(id,source,name,email,username,uuid,last_modified) values"
+				queryP := "insert ignore into profiles(uuid,name,email) values"
+				argsU := []interface{}{}
+				argsI := []interface{}{}
+				argsP := []interface{}{}
+				name := ident[0]
+				username := ident[1]
+				email := ident[2]
+				var (
+					pname     *string
+					pemail    *string
+					pusername *string
+					profname  *string
+				)
+				if name != "none" {
+					pname = &name
+					profname = &name
+				}
+				if email != "none" {
+					pemail = &email
+				}
+				if username != "none" {
+					pusername = &username
+					if profname == nil {
+						profname = &username
+					}
+				}
+				if pname == nil && pemail == nil && pusername == nil {
+					continue
+				}
+				// if username matches a real email and there is no email set, assume email=username
+				if pemail == nil && pusername != nil && dads.IsValidEmail(username) {
+					pemail = &username
+					email = username
+				}
+				// if name matches a real email and there is no email set, assume email=name
+				if pemail == nil && pname != nil && dads.IsValidEmail(name) {
+					pemail = &name
+					email = name
+				}
+				// uuid(source, email, name, username)
+				uuid := dads.UUIDAffs(pctx, source, email, name, username)
+				queryU += fmt.Sprintf("(?,now())")
+				queryI += fmt.Sprintf("(?,?,?,?,?,?,now())")
+				queryP += fmt.Sprintf("(?,?,?)")
+				argsU = append(argsU, uuid)
+				argsI = append(argsI, uuid, source, pname, pemail, pusername, uuid)
+				argsP = append(argsP, uuid, profname, pemail)
+				itx, err = pctx.DB.Begin()
+				if err != nil {
+					return
+				}
+				_, er = dads.ExecSQL(pctx, itx, queryU, argsU...)
+				if er != nil {
+					_ = itx.Rollback()
+					lib.Printf("one-by-one(%d/%d): %s[%+v]: %v\n", i+1, nIdents, queryU, argsU, er)
+					errs = append(errs, er)
+				}
+				_, er = dads.ExecSQL(pctx, itx, queryP, argsP...)
+				if er != nil {
+					_ = itx.Rollback()
+					lib.Printf("one-by-one(%d/%d): %s[%+v]: %v\n", i+1, nIdents, queryP, argsP, er)
+					errs = append(errs, er)
+				}
+				_, er = dads.ExecSQL(pctx, itx, queryI, argsI...)
+				if er != nil {
+					_ = itx.Rollback()
+					lib.Printf("one-by-one(%d/%d): %s[%+v]: %v\n", i+1, nIdents, queryI, argsI, er)
+					errs = append(errs, er)
+				}
+				err = itx.Commit()
+				if err != nil {
+					return
+				}
+				gUploadedIdentities[ident] = struct{}{}
+				itx = nil
+			}
+		}
+		return
+	}
+	var retry bool
+	retry, e = run(true)
+	if retry {
+		_, e = run(false)
+	}
 	return
 }
 
-func uploadIdentities(ctx *lib.Ctx, async bool) {
+func uploadIdentities(ctx *lib.Ctx, pctx *dads.Ctx, async bool) {
 	// Even if there is no data, last async jobs can still be running in the background
 	// The final call non-async is always ensuring that ES bulk upload job is finished
 	if !async && gThrN > 1 {
@@ -1132,14 +1368,14 @@ func uploadIdentities(ctx *lib.Ctx, async bool) {
 	if async && gThrN > 1 {
 		gUploadDBMtx.Lock()
 		go func() {
-			err := uploadToDB(ctx, items)
+			err := uploadToDB(ctx, pctx, items)
 			gUploadDBMtx.Unlock()
 			if err != nil {
 				lib.Printf("uploadToDB: %+v\n", err)
 			}
 		}()
 	} else {
-		err := uploadToDB(ctx, items)
+		err := uploadToDB(ctx, pctx, items)
 		if err != nil {
 			lib.Printf("uploadToDB: %+v\n", err)
 		}
@@ -1156,16 +1392,19 @@ func addIdentity(ctx *lib.Ctx, identity [3]string) {
 			gIdentityMtx.Unlock()
 		}()
 	}
+	_, ok := gUploadedIdentities[identity]
+	if ok {
+		return
+	}
 	gIdentities[identity] = struct{}{}
 	nIdentities := len(gIdentities)
 	if nIdentities < pctx.DBBulkSize {
-		// FIXME
-		if ctx.Debug > -1 {
+		if ctx.Debug > 1 {
 			lib.Printf("Pending identities: %d\n", nIdentities)
 		}
 		return
 	}
-	uploadIdentities(ctx, true)
+	uploadIdentities(ctx, pctx, true)
 }
 
 func getForksStarsCount(ev *lib.Event, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
@@ -1388,7 +1627,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	// FIXME: we don't have this information in GHA
 	// rich["time_to_first_attention"]
 	// FIXME handle affiliations here
-	if 1 == 1 {
+	if 1 == 0 {
 		dbg()
 	}
 	addRichItem(ctx, rich)
@@ -2216,8 +2455,8 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 	lib.Printf("Date range: %s - %s\n", lib.ToGHADate2(dFrom), lib.ToGHADate2(dTo))
 
 	defer func() {
+		uploadIdentities(ctx, &gDadsCtx, false)
 		uploadRichItems(ctx, false)
-		uploadIdentities(ctx, false)
 	}()
 
 	igc := 0
@@ -2749,7 +2988,6 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 		lib.Printf("incorrect current state, skipping: %s\n", prettyPrint(currentConfig))
 		return false
 	}
-	// FIXME: prev or current?
 	// syncFrom := lib.PrevHourStart(whenSaved)
 	syncFrom := lib.HourStart(whenSaved)
 	// If All RE is the same, then the configuration didn't changed since last run
@@ -3312,6 +3550,10 @@ func initDadsCtx(ctx *lib.Ctx) {
 	_ = os.Setenv("DA_GITHUB_DB_CONN", os.Getenv("GHA_DB_CONN"))
 	_ = os.Setenv("DA_GITHUB_DB_BULK_SIZE", os.Getenv("GHA_DB_BULK_SIZE"))
 	gDadsCtx.Init()
+	gDadsCtx.Debug = ctx.Debug
+	gDadsCtx.ST = ctx.ST
+	gDadsCtx.NCPUs = ctx.NCPUs
+	gDadsCtx.NCPUsScale = ctx.NCPUsScale
 	dads.ConnectAffiliationsDB(&gDadsCtx)
 }
 
@@ -3341,8 +3583,6 @@ func main() {
 		startDates = getStartDates(&ctx, config)
 	}
 	incremental := handleIncremental(&ctx, config, startDates)
-	// FIXME: is it enough? like only process GHA map files
-	// and repo start dates when incremental sync is impossible?
 	if !incremental {
 		handleGHAMap(&ctx)
 	}
