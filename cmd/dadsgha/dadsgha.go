@@ -1494,7 +1494,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	//  IssueCommentEvent
 	//  IssuesEvent
 	if ev.Payload.Issue == nil {
-		lib.Printf("Missing Issue object in %+v\n", ev)
+		lib.Printf("Missing Issue object in %+v\n", prettyPrint(ev))
 		return
 	}
 	issue := ev.Payload.Issue
@@ -1765,9 +1765,9 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	}
 	if ev.Payload.PullRequest == nil {
 		if oldFmt {
-			lib.Printf("Missing PR object (old format) in %+v (copied from %v)\n", ev, evo)
+			lib.Printf("Missing PR object (old format) in %+v (copied from %v)\n", prettyPrint(ev), prettyPrint(evo))
 		} else {
-			lib.Printf("Missing PR object in %+v\n", ev)
+			lib.Printf("Missing PR object in %+v\n", prettyPrint(ev))
 		}
 		return
 	}
