@@ -1259,6 +1259,10 @@ func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 					}
 					// uuid(source, email, name, username)
 					uuid := dads.UUIDAffs(pctx, source, email, name, username)
+					if uuid == "" {
+						lib.Printf("error: uploadToDb(bulk): failed to generate uuid for (%s,%s,%s,%s), skipping this one\n", source, email, name, username)
+						continue
+					}
 					queryU += fmt.Sprintf("(?,now()),")
 					queryI += fmt.Sprintf("(?,?,?,?,?,?,now()),")
 					queryP += fmt.Sprintf("(?,?,?),")
@@ -1335,6 +1339,12 @@ func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 				}
 				// uuid(source, email, name, username)
 				uuid := dads.UUIDAffs(pctx, source, email, name, username)
+				if uuid == "" {
+					er := fmt.Errorf("error: uploadToDB: failed to generate uuid for (%s,%s,%s,%s)", source, email, name, username)
+					lib.Printf("one-by-one(%d/%d): %v\n", i+1, nIdents, er)
+					errs = append(errs, er)
+					continue
+				}
 				queryU += fmt.Sprintf("(?,now())")
 				queryI += fmt.Sprintf("(?,?,?,?,?,?,now())")
 				queryP += fmt.Sprintf("(?,?,?)")
@@ -1350,18 +1360,21 @@ func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 					_ = itx.Rollback()
 					lib.Printf("one-by-one(%d/%d): %s[%+v]: %v\n", i+1, nIdents, queryU, argsU, er)
 					errs = append(errs, er)
+					continue
 				}
 				_, er = dads.ExecSQL(pctx, itx, queryP, argsP...)
 				if er != nil {
 					_ = itx.Rollback()
 					lib.Printf("one-by-one(%d/%d): %s[%+v]: %v\n", i+1, nIdents, queryP, argsP, er)
 					errs = append(errs, er)
+					continue
 				}
 				_, er = dads.ExecSQL(pctx, itx, queryI, argsI...)
 				if er != nil {
 					_ = itx.Rollback()
 					lib.Printf("one-by-one(%d/%d): %s[%+v]: %v\n", i+1, nIdents, queryI, argsI, er)
 					errs = append(errs, er)
+					continue
 				}
 				err = itx.Commit()
 				if err != nil {
@@ -1689,6 +1702,10 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	now := time.Now()
 	repo := "https://github.com/" + origin
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, repo, issueID)
+	if uuid == "" {
+		lib.Printf("error: enrichIssueData: failed to generate uuid for (%s,%s)\n", repo, issueID)
+		return
+	}
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
@@ -1872,6 +1889,9 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 				name, _ := identity["name"].(string)
 				username, _ := identity["username"].(string)
 				id := dads.UUIDAffs(pctx, "github", email, name, username)
+				if id == "" {
+					lib.Printf("error: enrichIssueData: failed to generate uuid for role %s (%s,github,%s,%s)\n", role, email, name, username)
+				}
 				if ctx.Debug > 0 {
 					lib.Printf("no issue identity affiliation data for %s identity %+v -> pending %s\n", role, identity, id)
 				}
@@ -1973,6 +1993,10 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	prID := strconv.Itoa(pr.ID)
 	repo := "https://github.com/" + origin
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, repo, prID)
+	if uuid == "" {
+		lib.Printf("error: enrichPRData: failed to generate uuid for (%s,%s)\n", repo, prID)
+		return
+	}
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
@@ -2228,6 +2252,9 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 				name, _ := identity["name"].(string)
 				username, _ := identity["username"].(string)
 				id := dads.UUIDAffs(pctx, "github", email, name, username)
+				if id == "" {
+					lib.Printf("error: enrichPRData: failed to generate uuid for role %s (%s,github,%s,%s)\n", role, email, name, username)
+				}
 				if ctx.Debug > 0 {
 					lib.Printf("no PR identity affiliation data for %s identity %+v -> pending %s\n", role, identity, id)
 				}
@@ -2326,6 +2353,10 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 	now := time.Now()
 	artificialID := fmt.Sprintf("%s@%d", origin, now.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
+	if uuid == "" {
+		lib.Printf("error: enrichRepoData: failed to generate uuid for (%s,%s)\n", origin, artificialID)
+		return
+	}
 	repo := "https://github.com/" + origin
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
@@ -2391,6 +2422,10 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	now := time.Now()
 	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
+	if uuid == "" {
+		lib.Printf("error: enrichRepoDataOld: failed to generate uuid for (%s,%s)\n", origin, artificialID)
+		return
+	}
 	repo := "https://github.com/" + origin
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
