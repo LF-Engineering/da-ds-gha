@@ -47,6 +47,8 @@ const (
 	// FIXME: remove this in a final version, here we want to avoid collision with SDS
 	cPrefix = "gha-"
 	// cPrefix = "sds-"
+	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
+	cMaxGitHubUsersFileCacheAge = 7776000
 )
 
 var (
@@ -153,25 +155,37 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 	}
 	// Try file cache 2nd
 	path := "cache/" + login + ".json"
-	bts, e := ioutil.ReadFile(path)
+	file, e := os.Stat(path)
 	if e == nil {
-		e = jsoniter.Unmarshal(bts, &user)
-		bts = nil
-		if e == nil {
-			found = len(user) > 0
-			if ctx.Debug > 0 {
-				lib.Printf("getGitHubUser(%d): file cache hit: %s\n", cacheSize, login)
+		modified := file.ModTime()
+		age := int(time.Now().Sub(modified).Seconds())
+		allowedAge := cMaxGitHubUsersFileCacheAge + rand.Intn(cMaxGitHubUsersFileCacheAge)
+		if age <= allowedAge {
+			bts, e := ioutil.ReadFile(path)
+			if e == nil {
+				e = jsoniter.Unmarshal(bts, &user)
+				bts = nil
+				if e == nil {
+					found = len(user) > 0
+					if ctx.Debug > 0 {
+						lib.Printf("getGitHubUser(%d): file cache hit: %s (age: %v/%v)\n", cacheSize, login, time.Duration(age)*time.Second, time.Duration(allowedAge)*time.Second)
+					}
+					if gGitHubUsersMtx != nil {
+						gGitHubUsersMtx.Lock()
+					}
+					gGitHubUsers[login] = user
+					if gGitHubUsersMtx != nil {
+						gGitHubUsersMtx.Unlock()
+					}
+					return
+				}
+				lib.Printf("getGitHubUser: cannot unmarshal %s cache file: %v\n", path, e)
+			} else {
+				lib.Printf("getGitHubUser: cannot read %s user cache file: %v\n", path, e)
 			}
-			if gGitHubUsersMtx != nil {
-				gGitHubUsersMtx.Lock()
-			}
-			gGitHubUsers[login] = user
-			if gGitHubUsersMtx != nil {
-				gGitHubUsersMtx.Unlock()
-			}
-			return
+		} else {
+			lib.Printf("getGitHubUser: %s user cache file is too old: %v (allowed %v)\n", path, time.Duration(age)*time.Second, time.Duration(allowedAge)*time.Second)
 		}
-		lib.Printf("getGitHubUser: cannot unmarshal %s cache file: %v\n", path, e)
 	} else {
 		if ctx.Debug > 0 {
 			lib.Printf("getGitHubUser: no %s user cache file: %v\n", path, e)
