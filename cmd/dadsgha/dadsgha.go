@@ -1823,8 +1823,12 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["closed_at"] = issue.ClosedAt
 	rich["updated_at"] = issue.UpdatedAt
 	sNumber := strconv.Itoa(issue.Number)
-	rich["url"] = repo + "/issues/" + sNumber
-	rich["url_id"] = githubRepo + "/issues/" + sNumber
+	mid := "/issues/"
+	if isPullRequest {
+		mid = "/pull/"
+	}
+	rich["url"] = repo + mid + sNumber
+	rich["url_id"] = githubRepo + mid + sNumber
 	labels := []string{}
 	for _, label := range issue.Labels {
 		labels = append(labels, label.Name)
