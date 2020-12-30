@@ -2969,11 +2969,15 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 			}
 		}
 	}
-	if minFrom.Before(gMinGHA) {
+	if minRepo == "" || minFrom.Before(gMinGHA) {
 		minFrom = gMinGHA
 	}
 	if !incremental {
-		lib.Printf("start date %v detected across indices (%s), but it wasn't possible to set autodetected incremental sync mode\n", minRepo, minFrom)
+		if minRepo == "" {
+			lib.Printf("no start date found across indices\n")
+		} else {
+			lib.Printf("start date index: %v detected across indices (%s), but it wasn't possible to set autodetected incremental sync mode\n", minRepo, minFrom)
+		}
 		// minFrom = gMinGHA
 		minFrom = detectMinReposStartDate(ctx, config, dss, startDates)
 	}
