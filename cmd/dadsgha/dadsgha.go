@@ -2056,7 +2056,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	foundMergedBy := false
 	if pr.MergedBy != nil {
 		login := pr.MergedBy.Login
-		rich["merged_by_login"] = login
+		rich["merge_author_login"] = login
 		userData, found, err := getGitHubUser(ctx, login)
 		if err != nil {
 			lib.Printf("Cannot get %s merged_by info: %+v while processing %+v\n", login, err, prettyPrint(ev))
@@ -2067,7 +2067,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			identity := [3]string{"none", login, "none"}
 			name := userData["name"]
 			email := userData["email"]
-			rich["merged_by_name"] = name
+			rich["merge_author_name"] = name
 			if name != nil {
 				identity[0] = *name
 			}
@@ -2075,14 +2075,14 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 				identity[2] = *email
 				ary := strings.Split(*email, "@")
 				if len(ary) > 1 {
-					rich["merged_by_domain"] = ary[1]
+					rich["merge_author_domain"] = ary[1]
 				}
 			} else {
-				rich["merged_by_domain"] = nil
+				rich["merge_author_domain"] = nil
 			}
-			rich["merged_by_org"] = userData["company"]
-			rich["merged_by_location"] = userData["location"]
-			rich["merged_by_geolocation"] = nil
+			rich["merge_author_org"] = userData["company"]
+			rich["merge_author_location"] = userData["location"]
+			rich["merge_author_geolocation"] = nil
 			addIdentity(ctx, identity)
 			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 			roles = append(roles, "merged_by_data")
@@ -2092,12 +2092,12 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		}
 	}
 	if !foundMergedBy {
-		rich["merged_by_name"] = nil
-		rich["merged_by_domain"] = nil
-		rich["merged_by_org"] = nil
-		rich["merged_by_location"] = nil
-		rich["merged_by_geolocation"] = nil
-		rich["merged_by_login"] = nil
+		rich["merge_author_name"] = nil
+		rich["merge_author_domain"] = nil
+		rich["merge_author_org"] = nil
+		rich["merge_author_location"] = nil
+		rich["merge_author_geolocation"] = nil
+		rich["merge_author_login"] = nil
 		rich["merged_by_data_uuid"] = ""
 		rich["merged_by_data_user_name"] = ""
 		rich["merged_by_data_org_name"] = "Unknown"
