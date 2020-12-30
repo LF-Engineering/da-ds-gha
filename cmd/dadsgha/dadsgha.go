@@ -1680,7 +1680,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		return
 	}
 	rich := make(map[string]interface{})
-	isPullRequest := ev.Payload.PullRequest != nil
+	isPullRequest := issue.PullRequest != nil
 	itemType := "issue"
 	if isPullRequest {
 		itemType = "pull request"
@@ -2159,7 +2159,6 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["additions"] = pr.Additions
 	rich["deletions"] = pr.Deletions
 	rich["changed_files"] = pr.ChangedFiles
-	rich["pull_request"] = true
 	if pr.Base.Repo != nil {
 		rich["forks"] = pr.Base.Repo.Forks
 	} else {
