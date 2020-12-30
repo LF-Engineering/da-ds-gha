@@ -68,12 +68,14 @@ var (
 	gGitHubMtx          *sync.RWMutex
 	gDadsCtx            dads.Ctx
 	gIdentityMtx        *sync.Mutex
+	gGitHubReposMtx     *sync.RWMutex
 	gRichItems          = map[string]map[string]interface{}{}
 	gEnsuredIndices     = map[string]struct{}{}
-	githubRichMapping   = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
+	gGitHubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
 	gNewFormatStarts    = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
 	gMinGHA             = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
 	gGitHubUsers        = map[string]map[string]*string{}
+	gGitHubRepos        = map[string]map[string]interface{}{}
 	gIdentities         = map[[3]string]struct{}{}
 	gUploadedIdentities = map[[3]string]struct{}{}
 	gGitHubDS           = &dads.DSStub{DS: "github"}
@@ -815,7 +817,7 @@ func ensureIndex(ch chan struct{}, ctx *lib.Ctx, idx string) {
 			lib.Printf("create %s --> %d\n", idx, resp.StatusCode)
 		}
 		url += "/_mapping"
-		data := githubRichMapping
+		data := gGitHubRichMapping
 		payloadBytes := []byte(data)
 		payloadBody := bytes.NewReader(payloadBytes)
 		req, err = http.NewRequest(method, url, payloadBody)
@@ -1448,6 +1450,165 @@ func addIdentity(ctx *lib.Ctx, identity [3]string) {
 	uploadIdentities(ctx, pctx, true)
 }
 
+func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, stars, subs, size, openIssues int, fork, ok bool, err error) {
+	var (
+		repo      map[string]interface{}
+		cacheSize int
+		found     bool
+	)
+	if origin != ev.Repo.Name {
+		return
+	}
+	ary := strings.Split(origin, "/")
+	if len(ary) != 2 {
+		return
+	}
+	org := ary[0]
+	repoName := ary[1]
+	setResults := func() {
+		if repo == nil || err != nil {
+			return
+		}
+		ok = true
+		forks, _ = repo["forks"].(int)
+		stars, _ = repo["stars"].(int)
+		subs, _ = repo["subs"].(int)
+		size, _ = repo["size"].(int)
+		openIssues, _ = repo["open_issues"].(int)
+		fork, _ = repo["fork"].(bool)
+		// fmt.Printf("getForksStarsCountAPI: %s -> (%d, %d, %d, %d, %d, %v, %v, %v)\n", origin, forks, stars, subs, size, openIssues, fork, ok, err)
+	}
+	// Try memory cache 1st
+	if gGitHubReposMtx != nil {
+		gGitHubReposMtx.RLock()
+	}
+	repo, found = gGitHubRepos[origin]
+	if ctx.Debug > 0 {
+		cacheSize = len(gGitHubRepos)
+	}
+	if gGitHubReposMtx != nil {
+		gGitHubReposMtx.RUnlock()
+	}
+	if found {
+		if ctx.Debug > 0 {
+			lib.Printf("getForksStarsCountAPI(%d): cache hit: %s\n", cacheSize, origin)
+		}
+		setResults()
+		return
+	}
+	if ctx.Debug > 0 {
+		lib.Printf("getForksStarsCountAPI(%d): cache miss: %s\n", cacheSize, origin)
+	}
+	// Try GitHub API 2nd
+	var c *github.Client
+	if gGitHubMtx != nil {
+		gGitHubMtx.RLock()
+	}
+	if !gInit || gHint < 0 {
+		if ctx.Debug > 0 {
+			lib.Printf("getForksStarsCountAPI: init\n")
+		}
+		if gGitHubMtx != nil {
+			gGitHubMtx.RUnlock()
+			gGitHubMtx.Lock()
+		}
+		if !gInit {
+			gctx, gc = lib.GHClient(ctx)
+			gInit = true
+		}
+		gHint, _ = handleRate(ctx)
+		c = gc[gHint]
+		if gGitHubMtx != nil {
+			gGitHubMtx.Unlock()
+		}
+	} else {
+		c = gc[gHint]
+		if gGitHubMtx != nil {
+			gGitHubMtx.RUnlock()
+		}
+		if ctx.Debug > 0 {
+			lib.Printf("getForksStarsCountAPI: reuse\n")
+		}
+	}
+	retry := false
+	for {
+		var (
+			response *github.Response
+			rep      *github.Repository
+			e        error
+		)
+		if ctx.Debug > 0 {
+			lib.Printf("getForksStarsCountAPI: ask %s\n", origin)
+		}
+		rep, response, e = c.Repositories.Get(gctx, org, repoName)
+		// lib.Printf("GET %s/%s -> {%+v, %+v, %+v}\n", org, repoName, rep, response, e)
+		if e != nil && strings.Contains(e.Error(), "404 Not Found") {
+			if gGitHubReposMtx != nil {
+				gGitHubReposMtx.Lock()
+			}
+			gGitHubRepos[origin] = nil
+			if gGitHubReposMtx != nil {
+				gGitHubReposMtx.Unlock()
+			}
+			return
+		}
+		if e != nil && !retry {
+			lib.Printf("Error getting %s repo: response: %+v, error: %+v, retrying rate\n", origin, response, e)
+			lib.Printf("getForksStarsCountAPI: handle rate\n")
+			if gGitHubMtx != nil {
+				gGitHubMtx.Lock()
+			}
+			gHint, _ = handleRate(ctx)
+			if gGitHubMtx != nil {
+				gGitHubMtx.Unlock()
+			}
+			retry = true
+			continue
+		}
+		if e != nil {
+			err = e
+			return
+		}
+		if rep != nil {
+			if rep.ForksCount != nil {
+				forks = *rep.ForksCount
+			}
+			if rep.StargazersCount != nil {
+				stars = *rep.StargazersCount
+			}
+			if rep.SubscribersCount != nil {
+				subs = *rep.SubscribersCount
+			}
+			if rep.Size != nil {
+				size = *rep.Size
+			}
+			if rep.OpenIssuesCount != nil {
+				openIssues = *rep.OpenIssuesCount
+			}
+			if rep.Fork != nil {
+				fork = *rep.Fork
+			}
+			repo = map[string]interface{}{
+				"forks":       forks,
+				"stars":       stars,
+				"subs":        subs,
+				"size":        size,
+				"open_issues": openIssues,
+				"fork":        fork,
+			}
+		}
+		break
+	}
+	if gGitHubReposMtx != nil {
+		gGitHubReposMtx.Lock()
+	}
+	gGitHubRepos[origin] = repo
+	if gGitHubReposMtx != nil {
+		gGitHubReposMtx.Unlock()
+	}
+	return
+}
+
 func getForksStarsCount(ev *lib.Event, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
 	if ev.Payload.PullRequest == nil {
 		return
@@ -1567,7 +1728,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["user_login"] = login
 	userData, found, err := getGitHubUser(ctx, login)
 	if err != nil {
-		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, ev)
+		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, prettyPrint(ev))
 		return
 	}
 	// name, username, email
@@ -1614,7 +1775,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["assignee_login"] = login
 		userData, found, err := getGitHubUser(ctx, login)
 		if err != nil {
-			lib.Printf("Cannot get %s assignee info: %+v while processing %+v\n", login, err, ev)
+			lib.Printf("Cannot get %s assignee info: %+v while processing %+v\n", login, err, prettyPrint(ev))
 			return
 		}
 		if found {
@@ -1835,7 +1996,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["user_login"] = login
 	userData, found, err := getGitHubUser(ctx, login)
 	if err != nil {
-		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, ev)
+		lib.Printf("Cannot get %s user info: %+v while processing %+v\n", login, err, prettyPrint(ev))
 		return
 	}
 	// name, username, email
@@ -1882,7 +2043,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		rich["merged_by_login"] = login
 		userData, found, err := getGitHubUser(ctx, login)
 		if err != nil {
-			lib.Printf("Cannot get %s merged_by info: %+v while processing %+v\n", login, err, ev)
+			lib.Printf("Cannot get %s merged_by info: %+v while processing %+v\n", login, err, prettyPrint(ev))
 			return
 		}
 		if found {
@@ -1932,7 +2093,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			rich[role+"_login"] = login
 			userData, found, err := getGitHubUser(ctx, login)
 			if err != nil {
-				lib.Printf("Cannot get %s %s info: %+v while processing %+v\n", login, role, err, ev)
+				lib.Printf("Cannot get %s %s info: %+v while processing %+v\n", login, role, err, prettyPrint(ev))
 				return
 			}
 			if found {
@@ -2074,7 +2235,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	return
 }
 
-func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[string]map[string]time.Time) (processed bool) {
+func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, startDates map[string]map[string]time.Time) (processed bool) {
 	fSlug := ev.GHAFxSlug
 	suff, ok := ev.GHASuffMap["repository"]
 	if !ok {
@@ -2095,7 +2256,24 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[s
 		}
 		return
 	}
-	forksCount, starsCount, size, openIssues, fork, ok := getForksStarsCount(ev, origin)
+	var (
+		forksCount int
+		starsCount int
+		size       int
+		openIssues int
+		subsCount  int
+		fork       bool
+		err        error
+	)
+	if forkEvent {
+		forksCount, starsCount, subsCount, size, openIssues, fork, ok, err = getForksStarsCountAPI(ctx, ev, origin)
+		if err != nil {
+			lib.Printf("Cannot get %s repo info: %+v while processing %+v\n", origin, err, prettyPrint(ev))
+			return
+		}
+	} else {
+		forksCount, starsCount, size, openIssues, fork, ok = getForksStarsCount(ev, origin)
+	}
 	if !ok {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %s: cannot get forks/stargazers info, skipping\n", origin, ev.Type)
@@ -2103,14 +2281,15 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[s
 		return
 	}
 	rich := make(map[string]interface{})
-	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
+	now := time.Now()
+	artificialID := fmt.Sprintf("%s@%d", origin, now.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	repo := "https://github.com/" + origin
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
-	rich["project_ts"] = time.Now().Unix()
+	rich["project_ts"] = now.Unix()
 	rich["gha_hour"] = ev.GHADt
 	rich["origin"] = repo
 	rich["tag"] = repo
@@ -2118,11 +2297,12 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[s
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = ev.CreatedAt
 	rich["grimoire_creation_date"] = ev.CreatedAt
+	rich["repo_status_date"] = now
 	rich["fetched_on"] = float64(ev.CreatedAt.UnixNano()) / 1.0e9
 	rich["uuid"] = uuid
 	rich["id"] = artificialID
 	rich["is_github_repository"] = 1
-	rich["metadata__enriched_on"] = time.Now()
+	rich["metadata__enriched_on"] = now
 	rich["offset"] = nil
 	rich["old_fmt"] = false
 	rich["forks_count"] = forksCount
@@ -2130,8 +2310,8 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[s
 	rich["size"] = size
 	rich["open_issues"] = openIssues
 	rich["fork"] = fork
-	// FIXME: GHA doesn't have this data
-	rich["subscribers_count"] = 0
+	// FIXME: we only get this data when using GitHub API (ev.Type == "ForkEvent")
+	rich["subscribers_count"] = subsCount
 	addRichItem(ctx, rich)
 	processed = true
 	return
@@ -2166,6 +2346,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 		return
 	}
 	rich := make(map[string]interface{})
+	now := time.Now()
 	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	repo := "https://github.com/" + origin
@@ -2173,7 +2354,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
 	rich["project"] = ev.GHAProj
-	rich["project_ts"] = time.Now().Unix()
+	rich["project_ts"] = now.Unix()
 	rich["gha_hour"] = ev.GHADt
 	rich["origin"] = repo
 	rich["tag"] = repo
@@ -2181,11 +2362,12 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = ev.CreatedAt
 	rich["grimoire_creation_date"] = ev.CreatedAt
+	rich["repo_status_date"] = ev.CreatedAt
 	rich["fetched_on"] = float64(ev.CreatedAt.UnixNano()) / 1.0e9
 	rich["uuid"] = uuid
 	rich["id"] = artificialID
 	rich["is_github_repository"] = 1
-	rich["metadata__enriched_on"] = time.Now()
+	rich["metadata__enriched_on"] = now
 	rich["offset"] = nil
 	rich["old_fmt"] = true
 	rich["forks_count"] = forksCount
@@ -2230,7 +2412,11 @@ func enrichData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[strin
 		if enrichPRData(ctx, ev, nil, origin, startDates) {
 			processed++
 		}
-		if enrichRepoData(ctx, ev, origin, startDates) {
+		if enrichRepoData(ctx, ev, false, origin, startDates) {
+			processed++
+		}
+	case "ForkEvent":
+		if enrichRepoData(ctx, ev, true, origin, startDates) {
 			processed++
 		}
 	}
@@ -3856,6 +4042,7 @@ func handleMT(ctx *lib.Ctx) {
 		gGitHubMtx = &sync.RWMutex{}
 		gIdentityMtx = &sync.Mutex{}
 		gUploadDBMtx = &sync.Mutex{}
+		gGitHubReposMtx = &sync.RWMutex{}
 		dads.SetMT()
 	}
 }
@@ -3889,7 +4076,8 @@ func cacheStats() {
 	dads.CacheSummary(&gDadsCtx)
 	lib.Printf("docs uploaded: %d\n", gDocsUploaded)
 	lib.Printf("indices: %d\n", len(gEnsuredIndices))
-	lib.Printf("GitHub users: %d\n", len(gGitHubUsers))
+	lib.Printf("GitHub API users: %d\n", len(gGitHubUsers))
+	lib.Printf("GitHub API repos: %d\n", len(gGitHubRepos))
 	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
 }
 
