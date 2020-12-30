@@ -1687,8 +1687,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	issueID := strconv.Itoa(issue.ID)
 	now := time.Now()
-	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, issueID)
 	repo := "https://github.com/" + origin
+	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, repo, issueID)
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
@@ -1956,8 +1956,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	now := time.Now()
 	pr := ev.Payload.PullRequest
 	prID := strconv.Itoa(pr.ID)
-	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, prID)
 	repo := "https://github.com/" + origin
+	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, repo, prID)
 	rich["event_type"] = ev.Type
 	rich["slug"] = ev.GHAFxSlug
 	rich["index"] = idx
