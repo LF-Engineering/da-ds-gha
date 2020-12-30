@@ -1764,7 +1764,11 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		}
 	}
 	if ev.Payload.PullRequest == nil {
-		lib.Printf("Missing PR object (old format) in %+v\n", ev)
+		if oldFmt {
+			lib.Printf("Missing PR object (old format) in %+v (copied from %v)\n", ev, evo)
+		} else {
+			lib.Printf("Missing PR object in %+v\n", ev)
+		}
 		return
 	}
 	fSlug := ev.GHAFxSlug
