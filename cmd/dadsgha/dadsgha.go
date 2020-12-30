@@ -1700,7 +1700,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["repository"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = now
-	rich["grimoire_creation_date"] = ev.CreatedAt
+	rich["grimoire_creation_date"] = issue.CreatedAt
 	rich["uuid"] = uuid
 	rich["id"] = issueID
 	rich["is_github_issue"] = 1
@@ -1813,6 +1813,17 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["assignee_org"] = nil
 		rich["assignee_location"] = nil
 		rich["assignee_geolocation"] = nil
+		rich["assignee_login"] = nil
+		rich["assignee_data_uuid"] = ""
+		rich["assignee_data_user_name"] = ""
+		rich["assignee_data_org_name"] = "Unknown"
+		rich["assignee_data_name"] = ""
+		rich["assignee_data_multi_org_names"] = []string{"Unknown"}
+		rich["assignee_data_id"] = ""
+		rich["assignee_data_gender_acc"] = nil
+		rich["assignee_data_gender"] = ""
+		rich["assignee_data_domain"] = ""
+		rich["assignee_data_bot"] = false
 	}
 	rich["id"] = issue.ID
 	rich["id_in_repo"] = issue.Number
@@ -1972,6 +1983,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["tag"] = repo
 	rich["repository"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
+	rich["grimoire_creation_date"] = pr.CreatedAt
 	rich["uuid"] = uuid
 	rich["id"] = prID
 	rich["is_github_pull_request"] = 1
@@ -2085,6 +2097,17 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		rich["merged_by_org"] = nil
 		rich["merged_by_location"] = nil
 		rich["merged_by_geolocation"] = nil
+		rich["merged_by_login"] = nil
+		rich["merged_by_data_uuid"] = ""
+		rich["merged_by_data_user_name"] = ""
+		rich["merged_by_data_org_name"] = "Unknown"
+		rich["merged_by_data_name"] = ""
+		rich["merged_by_data_multi_org_names"] = []string{"Unknown"}
+		rich["merged_by_data_id"] = ""
+		rich["merged_by_data_gender_acc"] = nil
+		rich["merged_by_data_gender"] = ""
+		rich["merged_by_data_domain"] = ""
+		rich["merged_by_data_bot"] = false
 	}
 	reviewers := []string{}
 	if pr.RequestedReviewers != nil {
@@ -2127,6 +2150,22 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 				reviewers = append(reviewers, login)
 			} else if ctx.Debug > 0 {
 				lib.Printf("warning: PR %s user %s not found\n", role, login)
+				rich[role+"_name"] = nil
+				rich[role+"_domain"] = nil
+				rich[role+"_org"] = nil
+				rich[role+"_location"] = nil
+				rich[role+"_geolocation"] = nil
+				rich[role+"_login"] = nil
+				rich[role+"_data_uuid"] = ""
+				rich[role+"_data_user_name"] = ""
+				rich[role+"_data_org_name"] = "Unknown"
+				rich[role+"_data_name"] = ""
+				rich[role+"_data_multi_org_names"] = []string{"Unknown"}
+				rich[role+"_data_id"] = ""
+				rich[role+"_data_gender_acc"] = nil
+				rich[role+"_data_gender"] = ""
+				rich[role+"_data_domain"] = ""
+				rich[role+"_data_bot"] = false
 			}
 		}
 	}
