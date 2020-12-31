@@ -1749,7 +1749,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["is_github_issue"] = 1
 	rich["pull_request"] = isPullRequest
 	rich["item_type"] = itemType
-	rich["metadata__enriched_on"] = time.Now()
+	rich["metadata__enriched_on"] = now
 	rich["offset"] = nil
 	githubRepo := origin
 	if strings.HasSuffix(githubRepo, ".git") {
@@ -2039,7 +2039,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["is_github_pull_request"] = 1
 	rich["pull_request"] = true
 	rich["item_type"] = "pull request"
-	rich["metadata__enriched_on"] = time.Now()
+	rich["metadata__enriched_on"] = now
 	rich["metadata__timestamp"] = now
 	rich["offset"] = nil
 	githubRepo := origin
@@ -3159,7 +3159,8 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.Time) {
 	// curl -XPOST -H 'Content-type: application/json' URL/_sql?format=csv -d"{\"query\":\"select origin, max(metadata__updated_on) from \\\"idx\\\" group by origin\"}"
 	data := fmt.Sprintf(
-		`{"query":"select origin, max(metadata__updated_on) as date from \"%s\" group by origin","fetch_size":%d}`,
+		//`{"query":"select origin, max(metadata__updated_on) as date from \"%s\" group by origin","fetch_size":%d}`,
+		`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
 		idx,
 		10000,
 	)
