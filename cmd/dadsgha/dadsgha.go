@@ -298,7 +298,7 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 	return
 }
 
-func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string, orgsMap, reposMap, resMap map[[2]string]map[string]struct{}, cache map[string][]string) {
+func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string, orgsMap, reposMap, resMap map[[2]string]map[string]struct{}, allReposMap map[string]struct{}, cache map[string][]string) {
 	keyAll := [2]string{"", ""}
 	if strings.HasPrefix(ep.Name, `regexp:`) {
 		re := ep.Name[7:]
@@ -341,6 +341,7 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 			reposMap[key] = make(map[string]struct{})
 		}
 		reposMap[key][r] = struct{}{}
+		allReposMap[r] = struct{}{}
 		return
 	}
 	tp, ok := ep.Flags["type"]
@@ -350,6 +351,7 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 	if tp != lib.GitHubOrg && tp != lib.GitHubUser {
 		return
 	}
+	fetchAllMode := false
 	if len(ep.Skip) == 0 && len(ep.Only) == 0 {
 		ary := strings.Split(ep.Name, "/")
 		tokens := []string{}
@@ -369,7 +371,9 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 			orgsMap[key] = make(map[string]struct{})
 		}
 		orgsMap[key][o] = struct{}{}
-		return
+		// If we were not to get all retos we could just return here
+		// return
+		fetchAllMode = true
 	}
 	arr := strings.Split(ep.Name, "/")
 	ary := []string{}
@@ -478,6 +482,10 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 		}
 		l := len(tokens)
 		r := tokens[l-2] + "/" + tokens[l-1]
+		allReposMap[r] = struct{}{}
+		if fetchAllMode {
+			continue
+		}
 		reposMap[keyAll][r] = struct{}{}
 		_, ok := reposMap[key]
 		if !ok {
@@ -487,7 +495,7 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 	}
 }
 
-func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]*regexp.Regexp) {
+func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]*regexp.Regexp, allRepos []string) {
 	fixtures := []lib.Fixture{}
 	if gThrN > 1 {
 		ch := make(chan lib.Fixture)
@@ -536,6 +544,7 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 	repos[keyAll] = make(map[string]struct{})
 	res[keyAll] = make(map[string]struct{})
 	cache := make(map[string][]string)
+	allReposMap := make(map[string]struct{})
 	gHint = -1
 	for _, fixture := range fixtures {
 		fSlug := fixture.Native.Slug
@@ -571,12 +580,12 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 			}
 			for _, ep := range ds.RawEndpoints {
 				key := [2]string{fSlug, ep.Project}
-				processEndpoint(ctx, &ep, git, key, orgs, repos, res, cache)
+				processEndpoint(ctx, &ep, git, key, orgs, repos, res, allReposMap, cache)
 				keys[key] = struct{}{}
 			}
 			for _, ep := range ds.HistEndpoints {
 				key := [2]string{fSlug, ep.Project}
-				processEndpoint(ctx, &ep, git, key, orgs, repos, res, cache)
+				processEndpoint(ctx, &ep, git, key, orgs, repos, res, allReposMap, cache)
 				keys[key] = struct{}{}
 			}
 			for _, project := range ds.Projects {
@@ -590,7 +599,7 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 						eProj = ep.Project
 					}
 					key := [2]string{fSlug, eProj}
-					processEndpoint(ctx, &ep, git, key, orgs, repos, res, cache)
+					processEndpoint(ctx, &ep, git, key, orgs, repos, res, allReposMap, cache)
 					keys[key] = struct{}{}
 				}
 				for _, ep := range project.HistEndpoints {
@@ -599,7 +608,7 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 						eProj = ep.Project
 					}
 					key := [2]string{fSlug, eProj}
-					processEndpoint(ctx, &ep, git, key, orgs, repos, res, cache)
+					processEndpoint(ctx, &ep, git, key, orgs, repos, res, allReposMap, cache)
 					keys[key] = struct{}{}
 				}
 			}
@@ -618,6 +627,10 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 			return a < b
 		},
 	)
+	for repo := range allReposMap {
+		allRepos = append(allRepos, repo)
+	}
+	sort.Strings(allRepos)
 	config = make(map[[2]string]*regexp.Regexp)
 	for _, key := range keysAry {
 		orgsAry := []string{}
@@ -673,7 +686,7 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 	}
 	// Eventually save config
 	if ctx.SaveConfig {
-		lib.FatalOnError(saveConfigFixtures(ctx, config))
+		lib.FatalOnError(saveConfigFixtures(ctx, config, allRepos))
 	}
 	return
 }
@@ -714,7 +727,7 @@ func saveConfigStartDates(ctx *lib.Ctx, startDates map[string]map[string]time.Ti
 	return
 }
 
-func saveConfigFixtures(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (err error) {
+func saveConfigFixtures(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, allRepos []string) (err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Wrap(err, "saveConfigFixtures")
@@ -726,6 +739,12 @@ func saveConfigFixtures(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (err 
 		return
 	}
 	fn := ctx.ConfigFile + "_fixtures.json"
+	err = ioutil.WriteFile(fn, bts, 0644)
+	bts, err = jsoniter.Marshal(allRepos)
+	if err != nil {
+		return
+	}
+	fn = ctx.ConfigFile + "_repos.json"
 	err = ioutil.WriteFile(fn, bts, 0644)
 	return
 }
@@ -746,7 +765,7 @@ func loadConfigStartDates(ctx *lib.Ctx) (startDates map[string]map[string]time.T
 	return
 }
 
-func loadConfigFixtures(ctx *lib.Ctx) (config map[[2]string]*regexp.Regexp, err error) {
+func loadConfigFixtures(ctx *lib.Ctx) (config map[[2]string]*regexp.Regexp, allRepos []string, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Wrap(err, "loadConfigFixtures")
@@ -761,6 +780,13 @@ func loadConfigFixtures(ctx *lib.Ctx) (config map[[2]string]*regexp.Regexp, err 
 	var data map[string]string
 	err = jsoniter.Unmarshal(bts, &data)
 	config = deserializeConfig(data)
+	fn = ctx.ConfigFile + "_repos.json"
+	bts, err = ioutil.ReadFile(fn)
+	if err != nil {
+		return
+	}
+	err = jsoniter.Unmarshal(bts, &allRepos)
+	// lib.Printf("%+v (%d)\n", allRepos, len(allRepos))
 	return
 }
 
@@ -2898,7 +2924,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	return
 }
 
-func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, startDates map[string]map[string]time.Time) {
+func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, allRepos []string, startDates map[string]map[string]time.Time) {
 	// Environment context parse
 	var (
 		err      error
@@ -3122,7 +3148,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, st
 	// saveGHARepoDates(ctx)
 	currentConfig := serializeConfig(config)
 	if maxProcessed.After(gMinGHA) {
-		err = saveFixturesState(ctx, currentConfig, maxProcessed)
+		err = saveFixturesState(ctx, currentConfig, allRepos, maxProcessed)
 		if err != nil {
 			lib.Printf("cannot save sync info: %+v\n", err)
 			return
@@ -3409,7 +3435,7 @@ func ensureSyncInfoIndex(ctx *lib.Ctx) (err error) {
 	return
 }
 
-func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, tm time.Time) (err error) {
+func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, allRepos []string, tm time.Time) (err error) {
 	idx := "ghasyncinfo"
 	method := "PUT"
 	item := map[string]interface{}{}
@@ -3418,6 +3444,7 @@ func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, tm time
 	item["id"] = id
 	item["dt"] = tm
 	item["config"] = serializedConfig
+	item["repos"] = allRepos
 	doc, err := jsoniter.Marshal(item)
 	if err != nil {
 		lib.Printf("marshal config error: %+v\n", err)
@@ -3458,7 +3485,7 @@ func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, tm time
 	return
 }
 
-func loadFixturesState(ctx *lib.Ctx) (config map[string]string, when time.Time, loaded bool, err error) {
+func loadFixturesState(ctx *lib.Ctx) (config map[string]string, allRepos []string, when time.Time, loaded bool, err error) {
 	idx := "ghasyncinfo"
 	method := "GET"
 	payloadBytes := []byte(`{"query":{"match_all":{}},"sort":{"id":{"order":"desc"}},"size":1}`)
@@ -3537,12 +3564,25 @@ func loadFixturesState(ctx *lib.Ctx) (config map[string]string, when time.Time, 
 			return
 		}
 	}
+	iRepos, ok := item["repos"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, ir := range iRepos {
+		repo, ok := ir.(string)
+		if !ok {
+			return
+		}
+		allRepos = append(allRepos, repo)
+	}
+	// FIXME
+	lib.Printf("loaded repos %+v (%d)\n", allRepos, len(allRepos))
 	loaded = true
 	return
 }
 
 // return true if we can do incremental sync
-func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startDates map[string]map[string]time.Time) bool {
+func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, allRepos []string, startDates map[string]map[string]time.Time) bool {
 	// No incremental flag - skips detecting what needs to be synced
 	// LoadConfig mode loads configuration from JSON (this is for the development)
 	// This configuration can have nothing to do with the real world, so do not attempt to
@@ -3560,10 +3600,11 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 	currentConfig := serializeConfig(config)
 	var (
 		savedConfig map[string]string
+		savedRepos  []string
 		ok          bool
 		whenSaved   time.Time
 	)
-	savedConfig, whenSaved, ok, err = loadFixturesState(ctx)
+	savedConfig, savedRepos, whenSaved, ok, err = loadFixturesState(ctx)
 	if err != nil {
 		lib.Printf("cannot load sync info, will do a full sync: %+v\n", err)
 		return false
@@ -3586,14 +3627,25 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 	syncFrom := lib.HourStart(whenSaved)
 	// If All RE is the same, then the configuration didn't changed since last run
 	if savedAllRE == currentAllRE {
-		lib.Printf("no fixtures state was changed since %+v\n", whenSaved)
-		for idx, originStartDates := range startDates {
-			for origin, startDate := range originStartDates {
-				if startDate.Before(syncFrom) {
-					if ctx.Debug > 0 {
-						lib.Printf("updating %s/%s start date %v -> %v\n", idx, origin, startDate, syncFrom)
+		reposEqual := true
+		if len(savedRepos) != len(allRepos) {
+			reposEqual = false
+		}
+		if reposEqual {
+			savedReposStr := strings.Join(savedRepos, ",")
+			allReposStr := strings.Join(allRepos, ",")
+			reposEqual = savedReposStr == allReposStr
+		}
+		if reposEqual {
+			lib.Printf("no fixtures state was changed since %+v\n", whenSaved)
+			for idx, originStartDates := range startDates {
+				for origin, startDate := range originStartDates {
+					if startDate.Before(syncFrom) {
+						if ctx.Debug > 0 {
+							lib.Printf("updating %s/%s start date %v -> %v\n", idx, origin, startDate, syncFrom)
+						}
+						startDates[idx][origin] = syncFrom
 					}
-					startDates[idx][origin] = syncFrom
 				}
 			}
 		}
@@ -3601,7 +3653,9 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, startD
 	}
 	lib.Printf("fixtures state changed\n")
 	lib.Printf("saved: %s\n", savedAllRE)
+	lib.Printf("saved repos: %v\n", savedRepos)
 	lib.Printf("current: %s\n", currentAllRE)
+	lib.Printf("current repos: %v\n", allRepos)
 	lib.Printf("skipping incremental mode, switching to detecting start date\n")
 	return false
 }
@@ -4175,23 +4229,24 @@ func main() {
 	handleMT(&ctx)
 	var (
 		config     map[[2]string]*regexp.Regexp
+		allRepos   []string
 		startDates map[string]map[string]time.Time
 	)
 	if ctx.LoadConfig {
 		var err error
-		config, err = loadConfigFixtures(&ctx)
+		config, allRepos, err = loadConfigFixtures(&ctx)
 		lib.FatalOnError(err)
 		startDates, err = loadConfigStartDates(&ctx)
 		lib.FatalOnError(err)
 	} else {
-		config = processFixtures(&ctx, lib.GetFixtures(&ctx, path))
+		config, allRepos = processFixtures(&ctx, lib.GetFixtures(&ctx, path))
 		startDates = getStartDates(&ctx, config)
 	}
-	incremental := handleIncremental(&ctx, config, startDates)
+	incremental := handleIncremental(&ctx, config, allRepos, startDates)
 	if !incremental {
 		handleGHAMap(&ctx)
 	}
-	gha(&ctx, incremental, config, startDates)
+	gha(&ctx, incremental, config, allRepos, startDates)
 	dtEnd := time.Now()
 	cacheStats()
 	lib.Printf("Uploaded: %d, took: %v\n", gDocsUploaded, dtEnd.Sub(dtStart))
