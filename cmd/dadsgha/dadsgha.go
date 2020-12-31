@@ -3576,8 +3576,7 @@ func loadFixturesState(ctx *lib.Ctx) (config map[string]string, allRepos []strin
 		}
 		allRepos = append(allRepos, repo)
 	}
-	// FIXME
-	lib.Printf("loaded repos %+v (%d)\n", allRepos, len(allRepos))
+	// lib.Printf("loaded repos %+v (%d)\n", allRepos, len(allRepos))
 	loaded = true
 	return
 }
