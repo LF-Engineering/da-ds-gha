@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -79,6 +80,7 @@ var (
 	gIdentities         = map[[3]string]struct{}{}
 	gUploadedIdentities = map[[3]string]struct{}{}
 	gGitHubDS           = &dads.DSStub{DS: "github"}
+	gSyncDates          = map[string]map[string]time.Time{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -943,6 +945,27 @@ func prettyPrint(data interface{}) string {
 	return string(pretty)
 }
 
+func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
+	for _, item := range items {
+		index, _ := item["index"].(string)
+		origin, _ := item["github_repo"].(string)
+		ghaHour, _ := item["gha_hour"].(time.Time)
+		_, ok := gSyncDates[index]
+		if !ok {
+			gSyncDates[index] = map[string]time.Time{}
+		}
+		dt, ok := gSyncDates[index][origin]
+		if !ok {
+			gSyncDates[index][origin] = ghaHour
+			continue
+		}
+		if ghaHour.After(dt) {
+			gSyncDates[index][origin] = ghaHour
+		}
+	}
+	return
+}
+
 func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	// TODO: connect s3 retry mechanism
 	nItems := len(items)
@@ -1008,6 +1031,10 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	if !ers {
 		gDocsUploaded += int64(nItems)
 		lib.Printf("bulk uploaded %d documents\n", nItems)
+		e := markSyncDates(ctx, items)
+		if e != nil {
+			lib.Printf("Error marking sync dates for %d items: %v\n", len(items), e)
+		}
 		return
 	}
 	lib.Printf("falling back to one-by-one mode because: %s\n", prettyPrint(result))
@@ -1039,7 +1066,7 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 			}
 		}
 	}
-	uploaded, notUploaded := 0, 0
+	uploaded, notUploaded, gaps := 0, 0, 0
 	if len(errUUIDs) > 0 {
 		lib.Printf("failed %d/%d documents\n", len(errUUIDs), nItems)
 		newItems := []map[string]interface{}{}
@@ -1057,6 +1084,7 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 		}
 	}
 	method = "PUT"
+	uploadedItems := []map[string]interface{}{}
 	for _, item := range items {
 		notUploaded++
 		doc, _ = jsoniter.Marshal(item)
@@ -1071,36 +1099,74 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		resp, e := http.DefaultClient.Do(req)
-		if e != nil {
-			lib.Printf("do request error: %+v for %s url: %s, doc: %s\n", e, method, url, prettyPrint(item))
-			continue
+		trial := 0
+		for trial = 0; trial < 3; trial++ {
+			resp, e := http.DefaultClient.Do(req)
+			if e != nil {
+				lib.Printf("do request error: %+v for %s url: %s, doc: %s\n", e, method, url, prettyPrint(item))
+				continue
+			}
+			if resp.StatusCode != 200 && resp.StatusCode != 201 {
+				var body []byte
+				body, e = ioutil.ReadAll(resp.Body)
+				if e != nil {
+					lib.Printf("read all response error: %+v for %s url: %s, doc: %s\n", e, method, url, prettyPrint(item))
+					continue
+				}
+				_ = resp.Body.Close()
+				var result map[string]interface{}
+				e = jsoniter.Unmarshal(body, &result)
+				if e != nil {
+					lib.Printf("unmarshal response error: %+v for %s url: %s, doc: %s, body: %s\n", e, method, url, prettyPrint(item), string(body))
+					continue
+				}
+				lib.Printf("upload status %d for %s url: %s, doc: %s, result: %s\n", resp.StatusCode, method, url, prettyPrint(item), prettyPrint(result))
+				continue
+			}
+			break
 		}
-		if resp.StatusCode != 200 && resp.StatusCode != 201 {
-			var body []byte
-			body, e = ioutil.ReadAll(resp.Body)
-			if e != nil {
-				lib.Printf("read all response error: %+v for %s url: %s, doc: %s\n", e, method, url, prettyPrint(item))
-				continue
+		if trial >= 3 {
+			if ctx.GapURL != "" {
+				dataEnc := base64.StdEncoding.EncodeToString(doc)
+				lib.Printf("Sending item (%d bytes) to the GAP API\n", len(dataEnc))
+				gapBody := map[string]string{"payload": dataEnc}
+				bData, err := jsoniter.Marshal(gapBody)
+				if err != nil {
+					lib.Printf("Cannot marshal GAP body: %v\n", gapBody)
+					continue
+				}
+				payloadBody := bytes.NewReader(bData)
+				method := "POST"
+				url := ctx.GapURL
+				req, e := http.NewRequest(method, url, payloadBody)
+				if e != nil {
+					lib.Printf("new request error: %+v for %s url: %s, body: %s\n", e, method, url, prettyPrint(bData))
+					continue
+				}
+				req.Header.Set("Content-Type", "application/json")
+				resp, e := http.DefaultClient.Do(req)
+				if e != nil {
+					lib.Printf("do request error: %+v for %s url: %s, doc: %s\n", e, method, url, prettyPrint(bData))
+					continue
+				}
+				lib.Printf("Sent item (%d bytes) to the GAP API: status: %d\n", len(dataEnc), resp.StatusCode)
+				gaps++
 			}
-			_ = resp.Body.Close()
-			var result map[string]interface{}
-			e = jsoniter.Unmarshal(body, &result)
-			if e != nil {
-				lib.Printf("unmarshal response error: %+v for %s url: %s, doc: %s, body: %s\n", e, method, url, prettyPrint(item), string(body))
-				continue
-			}
-			lib.Printf("upload status %d for %s url: %s, doc: %s, result: %s\n", resp.StatusCode, method, url, prettyPrint(item), prettyPrint(result))
 			continue
 		}
 		uploaded++
 		notUploaded--
 		if ctx.Debug > 0 {
-			lib.Printf("uploaded %d, failed %d, all %d\n", uploaded, notUploaded, nItems)
+			lib.Printf("uploaded %d, failed %d, gaps %d, all %d\n", uploaded, notUploaded, gaps, nItems)
 		}
+		uploadedItems = append(uploadedItems, item)
 	}
 	lib.Printf("uploaded %d/%d documents, failed %d (in one by one fallback)\n", uploaded, nItems, notUploaded)
 	gDocsUploaded += int64(uploaded)
+	e := markSyncDates(ctx, uploadedItems)
+	if e != nil {
+		lib.Printf("Error marking sync dates for %d items (one-by-one): %v\n", len(uploadedItems), e)
+	}
 	return
 }
 
@@ -2409,6 +2475,11 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 	rich["size"] = size
 	rich["open_issues"] = openIssues
 	rich["fork"] = fork
+	githubRepo := origin
+	if strings.HasSuffix(githubRepo, ".git") {
+		githubRepo = githubRepo[:len(githubRepo)-4]
+	}
+	rich["github_repo"] = githubRepo
 	// FIXME: we only get this data when using GitHub API (ev.Type == "ForkEvent")
 	rich["subscribers_count"] = subsCount
 	addRichItem(ctx, rich)
@@ -2478,6 +2549,11 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	rich["size"] = size
 	rich["open_issues"] = openIssues
 	rich["fork"] = fork
+	githubRepo := origin
+	if strings.HasSuffix(githubRepo, ".git") {
+		githubRepo = githubRepo[:len(githubRepo)-4]
+	}
+	rich["github_repo"] = githubRepo
 	// FIXME: GHA doesn't have this data
 	rich["subscribers_count"] = 0
 	addRichItem(ctx, rich)
@@ -3077,6 +3153,8 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	defer func() {
 		uploadIdentities(ctx, &gDadsCtx, false)
 		uploadRichItems(ctx, false)
+		updateStartDates(startDates, gSyncDates)
+		lib.FatalOnError(saveConfigStartDates(ctx, startDates))
 	}()
 
 	igc := 0
@@ -3160,7 +3238,8 @@ func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.T
 	// curl -XPOST -H 'Content-type: application/json' URL/_sql?format=csv -d"{\"query\":\"select origin, max(metadata__updated_on) from \\\"idx\\\" group by origin\"}"
 	data := fmt.Sprintf(
 		//`{"query":"select origin, max(metadata__updated_on) as date from \"%s\" group by origin","fetch_size":%d}`,
-		`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
+		//`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
+		`{"query":"select origin, max(gha_hour) as date from \"%s\" group by origin","fetch_size":%d}`,
 		idx,
 		10000,
 	)
@@ -3322,6 +3401,25 @@ func getIndexSuffixMap(data string) (suffMap map[string]string) {
 	return
 }
 
+func updateStartDates(startDates, update map[string]map[string]time.Time) {
+	for idx, data := range update {
+		_, ok := startDates[idx]
+		if !ok {
+			startDates[idx] = map[string]time.Time{}
+		}
+		for origin, newDt := range data {
+			dt, ok := startDates[idx][origin]
+			if !ok {
+				startDates[idx][origin] = newDt
+				continue
+			}
+			if newDt.After(dt) {
+				startDates[idx][origin] = newDt
+			}
+		}
+	}
+}
+
 func getStartDates(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (startDates map[string]map[string]time.Time) {
 	indices := make(map[string]struct{})
 	for k := range config {
@@ -3383,7 +3481,11 @@ func getStartDates(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (startDate
 			}
 		}
 	}
-	// Eventually save config
+	savedStartDates, err := loadConfigStartDates(ctx)
+	if err == nil {
+		updateStartDates(startDates, savedStartDates)
+	}
+	// Eventually save config start dates
 	if ctx.SaveConfig {
 		lib.FatalOnError(saveConfigStartDates(ctx, startDates))
 	}

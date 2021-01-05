@@ -25,6 +25,7 @@ type Ctx struct {
 	NoIncremental    bool     // From GHA_NO_INCREMENTAL, if set - it will not attempt to detect fixture changes since last run and will treat all fixtures as new and detect the start date everywhere
 	NoGHAMap         bool     // From GHA_NO_GHA_MAP, if set - it will not use any GHA map files (which azre very memory consuming)
 	ConfigFile       string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config" (gha_config_fixtures.json, gha_config_dates.json)
+	GapURL           string   // From GHA_GAP_URL, address of the GAP API
 	TestMode         bool     // True when running tests
 	OAuthKeys        []string // GitHub oauth keys recevide from GHA_GITHUB_OAUTH configuration (initialized only when lib.GHClient() is called)
 }
@@ -96,6 +97,9 @@ func (ctx *Ctx) Init() {
 
 	// GitHub OAuth
 	ctx.GitHubOAuth = os.Getenv("GHA_GITHUB_OAUTH")
+
+	// GAP URL API
+	ctx.GapURL = os.Getenv("GHA_GAP_URL")
 
 	// ElasticSearch URL
 	ctx.ESURL = os.Getenv("GHA_ES_URL")
