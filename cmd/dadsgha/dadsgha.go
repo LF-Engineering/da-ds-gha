@@ -45,8 +45,7 @@ type ghaMapItem struct {
 // something like '(?i)^prometheus$' (compiled)
 
 const (
-	// FIXME: remove this in a final version, here we want to avoid collision with SDS
-	cPrefix = "gha-"
+	cPrefix = "sds-"
 	// cPrefix = "sds-"
 	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
 	cMaxGitHubUsersFileCacheAge = 7776000
@@ -3236,7 +3235,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 			return
 		}
 	} else {
-		fmt.Printf("no new data was processed, not saving fixtures state\n")
+		lib.Printf("no new data was processed, not saving fixtures state\n")
 	}
 }
 
