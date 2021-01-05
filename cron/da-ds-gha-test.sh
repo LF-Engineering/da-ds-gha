@@ -11,6 +11,7 @@ export GHA_HOUR_FROM=''
 export GHA_HOUR_TO=''
 export GHA_DAY_FROM=''
 export GHA_DAY_TO=''
+export GHA_NO_GHA_REPO_DATES=1
 export GHA_ES_URL="`cat ES_URL.test.secret`"
 export GHA_DB_CONN="`cat DB_CONN.test.secret`"
 export GHA_GITHUB_OAUTH="`cat OAUTHS.secret`"
