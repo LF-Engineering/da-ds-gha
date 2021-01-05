@@ -29,9 +29,10 @@ function cleanup {
 }
 if [ -f "${lock_file}" ]
 then
-  # echo "$0: another da-ds-gha instance \"$1\" is still running, exiting"
+  echo "$0: another da-ds-gha \"$2\" instance \"$1\" is still running, exiting"
   exit 10
 fi
 > "${lock_file}"
 trap cleanup EXIT
-./dadsgha ./dev-analytics-api/app/services/lf/bootstrap/fixtures 2>&1 | tee -a run.log
+#./dadsgha ./dev-analytics-api/app/services/lf/bootstrap/fixtures 2>&1 | tee -a run.log
+./dadsgha ./dev-analytics-api/app/services/lf/bootstrap/fixtures
