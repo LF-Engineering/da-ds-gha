@@ -23,7 +23,8 @@ type Ctx struct {
 	LoadConfig       bool     // From GHA_LOAD_CONFIG, if set - it will load configuration instead of reading all fixtures
 	SaveConfig       bool     // From GHA_SAVE_CONFIG, if set - it will save configuration in a JSON file
 	NoIncremental    bool     // From GHA_NO_INCREMENTAL, if set - it will not attempt to detect fixture changes since last run and will treat all fixtures as new and detect the start date everywhere
-	NoGHAMap         bool     // From GHA_NO_GHA_MAP, if set - it will not use any GHA map files (which azre very memory consuming)
+	NoGHAMap         bool     // From GHA_NO_GHA_MAP, if set - it will not use any GHA map files (which are very memory consuming)
+	NoGHARepoDates   bool     // From GHA_NO_GHA_REPO_DATES, if set, it will skip GHA repo dates processing (file is huge, requires around 30G of memory), GHA map files can still be processed
 	ConfigFile       string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config" (gha_config_fixtures.json, gha_config_dates.json)
 	GapURL           string   // From GHA_GAP_URL, address of the GAP API
 	TestMode         bool     // True when running tests
@@ -94,6 +95,7 @@ func (ctx *Ctx) Init() {
 
 	// No GHA map mode
 	ctx.NoGHAMap = os.Getenv("GHA_NO_GHA_MAP") != ""
+	ctx.NoGHARepoDates = os.Getenv("GHA_NO_GHA_REPO_DATES") != ""
 
 	// GitHub OAuth
 	ctx.GitHubOAuth = os.Getenv("GHA_GITHUB_OAUTH")

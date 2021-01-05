@@ -2904,7 +2904,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 }
 
 func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, dss map[string]map[string]string, startDates map[string]map[string]time.Time) (minFrom time.Time) {
-	if gGHARepoDates == nil {
+	if ctx.NoGHARepoDates || gGHARepoDates == nil {
 		minFrom = gMinGHA
 		return
 	}
@@ -4094,8 +4094,11 @@ func maxDateGHAMap(ctx *lib.Ctx) *time.Time {
 }
 
 func loadGHARepoDates(ctx *lib.Ctx) {
-	defer func() { runGC() }()
 	gGHARepoDates = nil
+	if ctx.NoGHARepoDates {
+		return
+	}
+	defer func() { runGC() }()
 	path := "gha_map_repo_dates.json"
 	lib.Printf("loading GHA map repo dates %s\n", path)
 	bts, err := ioutil.ReadFile(path)
@@ -4118,7 +4121,7 @@ func loadGHARepoDates(ctx *lib.Ctx) {
 }
 
 func saveGHARepoDates(ctx *lib.Ctx) {
-	if gGHARepoDates == nil {
+	if ctx.NoGHARepoDates || gGHARepoDates == nil {
 		return
 	}
 	if len(gGHARepoDates) < 1 {
@@ -4148,6 +4151,9 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 }
 
 func updateGHARepoDatesMonth(ctx *lib.Ctx) {
+	if ctx.NoGHARepoDates {
+		return
+	}
 	defer func() { runGC() }()
 	if gGHARepoDates == nil {
 		gGHARepoDates = make(map[string]map[string]int)
@@ -4206,6 +4212,9 @@ func updateGHARepoDatesMonth(ctx *lib.Ctx) {
 func updateGHARepoDatesHour(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
 	// Not deferring GC because this is too often - it's for every hour
 	//defer func() { runGC() }()
+	if ctx.NoGHARepoDates {
+		return
+	}
 	if gGHARepoDates == nil {
 		gGHARepoDates = make(map[string]map[string]int)
 	}
@@ -4264,8 +4273,10 @@ func handleGHAMap(ctx *lib.Ctx) {
 	defer func() { runGC() }()
 	loadGHARepoDates(ctx)
 	had := 0
-	for _, repos := range gGHARepoDates {
-		had += len(repos)
+	if !ctx.NoGHARepoDates {
+		for _, repos := range gGHARepoDates {
+			had += len(repos)
+		}
 	}
 	maxDt := maxDateGHAMap(ctx)
 	if maxDt == nil {
@@ -4284,13 +4295,15 @@ func handleGHAMap(ctx *lib.Ctx) {
 		}
 	}
 	have := 0
-	for _, repos := range gGHARepoDates {
-		have += len(repos)
-	}
-	if have != had {
-		saveGHARepoDates(ctx)
-	} else {
-		lib.Printf("no new repo start dates detected\n")
+	if !ctx.NoGHARepoDates {
+		for _, repos := range gGHARepoDates {
+			have += len(repos)
+		}
+		if have != had {
+			saveGHARepoDates(ctx)
+		} else {
+			lib.Printf("no new repo start dates detected\n")
+		}
 	}
 }
 
