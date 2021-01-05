@@ -45,7 +45,7 @@ type ghaMapItem struct {
 // something like '(?i)^prometheus$' (compiled)
 
 const (
-  // FIXME
+	// FIXME
 	cPrefix = "gha-"
 	// cPrefix = "sds-"
 	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
