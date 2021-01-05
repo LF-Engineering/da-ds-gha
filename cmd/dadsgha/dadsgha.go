@@ -950,19 +950,19 @@ func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	for _, item := range items {
 		index, _ := item["index"].(string)
 		origin, _ := item["github_repo"].(string)
-		ghaHour, _ := item["gha_hour"].(time.Time)
+		enriched, _ := item["metadata__enriched_on"].(time.Time)
 		_, ok := gSyncDates[index]
 		if !ok {
 			gSyncDates[index] = map[string]time.Time{}
 		}
 		dt, ok := gSyncDates[index][origin]
 		if !ok {
-			gSyncDates[index][origin] = ghaHour
+			gSyncDates[index][origin] = enriched
 			n++
 			continue
 		}
-		if ghaHour.After(dt) {
-			gSyncDates[index][origin] = ghaHour
+		if enriched.After(dt) {
+			gSyncDates[index][origin] = enriched
 			u++
 		}
 	}
@@ -1136,7 +1136,7 @@ func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 				gapBody := map[string]string{"payload": dataEnc}
 				bData, err := jsoniter.Marshal(gapBody)
 				if err != nil {
-					lib.Printf("Cannot marshal GAP body: %v\n", gapBody)
+					lib.Printf("Cannot marshal GAP body: %v: %v\n", gapBody, err)
 					continue
 				}
 				payloadBody := bytes.NewReader(bData)
@@ -3228,13 +3228,15 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	}
 	// Uncomment to save GHA month repo start dates when processing actual GHA data
 	// saveGHARepoDates(ctx)
-	currentConfig := serializeConfig(config)
 	if maxProcessed.After(gMinGHA) {
+		currentConfig := serializeConfig(config)
 		err = saveFixturesState(ctx, currentConfig, allRepos, maxProcessed)
 		if err != nil {
 			lib.Printf("cannot save sync info: %+v\n", err)
 			return
 		}
+	} else {
+		fmt.Printf("no new data was processed, not saving fixtures state\n")
 	}
 }
 
@@ -3242,8 +3244,8 @@ func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.T
 	// curl -XPOST -H 'Content-type: application/json' URL/_sql?format=csv -d"{\"query\":\"select origin, max(metadata__updated_on) from \\\"idx\\\" group by origin\"}"
 	data := fmt.Sprintf(
 		//`{"query":"select origin, max(metadata__updated_on) as date from \"%s\" group by origin","fetch_size":%d}`,
-		//`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
-		`{"query":"select origin, max(gha_hour) as date from \"%s\" group by origin","fetch_size":%d}`,
+		//`{"query":"select origin, max(gha_hour) as date from \"%s\" group by origin","fetch_size":%d}`,
+		`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
 		idx,
 		10000,
 	)
@@ -3593,6 +3595,7 @@ func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, allRepo
 		lib.Printf("save state status %d for %s url: %s, doc: %s, result: %s\n", resp.StatusCode, method, url, prettyPrint(item), prettyPrint(result))
 		return
 	}
+	lib.Printf("saved fixtures state to ES\n")
 	return
 }
 
@@ -3737,14 +3740,24 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, allRep
 	syncFrom := lib.HourStart(whenSaved)
 	// If All RE is the same, then the configuration didn't changed since last run
 	if savedAllRE == currentAllRE {
+		//savedReposStr := strings.Join(savedRepos, ",")
+		//allReposStr := strings.Join(allRepos, ",")
+		//reposEqual = savedReposStr == allReposStr
 		reposEqual := true
-		if len(savedRepos) != len(allRepos) {
-			reposEqual = false
+		previousStateMap := map[string]struct{}{}
+		for _, repo := range savedRepos {
+			previousStateMap[repo] = struct{}{}
 		}
-		if reposEqual {
-			savedReposStr := strings.Join(savedRepos, ",")
-			allReposStr := strings.Join(allRepos, ",")
-			reposEqual = savedReposStr == allReposStr
+		// If any of current repos is not present in previous repos
+		// That means we have a new repo, so we need to detect start date (fixtures state changed)
+		// If any of previous repos is not present in current repos - this is fine
+		// It means we now track less repos, so we can assume no fixtures state was changed
+		for _, repo := range allRepos {
+			_, ok := previousStateMap[repo]
+			if !ok {
+				reposEqual = false
+				break
+			}
 		}
 		if reposEqual {
 			lib.Printf("no fixtures state was changed since %+v\n", whenSaved)
@@ -3758,8 +3771,8 @@ func handleIncremental(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, allRep
 					}
 				}
 			}
+			return true
 		}
-		return true
 	}
 	lib.Printf("fixtures state changed\n")
 	lib.Printf("saved: %s\n", savedAllRE)
