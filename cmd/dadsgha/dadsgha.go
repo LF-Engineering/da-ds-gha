@@ -4044,11 +4044,13 @@ func saveGHAMap(ctx *lib.Ctx, dt time.Time) {
 	defer func() { runGC() }()
 	sdt := lib.ToYMDate(dt)
 	path := "gha_map_" + sdt + ".json"
+	runGC()
 	bts, err := jsoniter.Marshal(gGHAMap)
 	if err != nil {
 		lib.Printf("cannot marshal GHA map with %d items to file %s\n", len(gGHAMap), path)
 		return
 	}
+	runGC()
 	err = ioutil.WriteFile(path, bts, 0644)
 	if err != nil {
 		lib.Printf("cannot write GHA map file %s, %d bytes\n", path, len(bts))
@@ -4129,11 +4131,13 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	}
 	path := "gha_map_repo_dates.json"
 	lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, len(gGHARepoDates), nRepos)
+	runGC()
 	bts, err := jsoniter.Marshal(gGHARepoDates)
 	if err != nil {
 		lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", len(gGHARepoDates), nRepos, path)
 		return
 	}
+	runGC()
 	err = ioutil.WriteFile(path, bts, 0644)
 	if err != nil {
 		lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
