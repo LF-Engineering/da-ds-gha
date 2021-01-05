@@ -946,6 +946,7 @@ func prettyPrint(data interface{}) string {
 }
 
 func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
+	n, u := 0, 0
 	for _, item := range items {
 		index, _ := item["index"].(string)
 		origin, _ := item["github_repo"].(string)
@@ -957,12 +958,15 @@ func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 		dt, ok := gSyncDates[index][origin]
 		if !ok {
 			gSyncDates[index][origin] = ghaHour
+			n++
 			continue
 		}
 		if ghaHour.After(dt) {
 			gSyncDates[index][origin] = ghaHour
+			u++
 		}
 	}
+	lib.Printf("marked %d sync dates, added %d\n", u, n)
 	return
 }
 
@@ -3402,6 +3406,7 @@ func getIndexSuffixMap(data string) (suffMap map[string]string) {
 }
 
 func updateStartDates(startDates, update map[string]map[string]time.Time) {
+	n, u := 0, 0
 	for idx, data := range update {
 		_, ok := startDates[idx]
 		if !ok {
@@ -3411,13 +3416,16 @@ func updateStartDates(startDates, update map[string]map[string]time.Time) {
 			dt, ok := startDates[idx][origin]
 			if !ok {
 				startDates[idx][origin] = newDt
+				n++
 				continue
 			}
 			if newDt.After(dt) {
 				startDates[idx][origin] = newDt
+				u++
 			}
 		}
 	}
+	lib.Printf("updated %d sync dates, added %d\n", u, n)
 }
 
 func getStartDates(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (startDates map[string]map[string]time.Time) {
