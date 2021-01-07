@@ -4153,7 +4153,7 @@ func saveGHARepoDates(ctx *lib.Ctx, sha2 string) {
 		lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	lib.Printf("saved GHA map repo dates %s %d orgs, %d items\n", path, len(gGHARepoDates), nRepos)
+	lib.Printf("saved GHA map repo dates %s %d orgs, %d items, %d bytes\n", path, len(gGHARepoDates), nRepos, len(bts))
 	return
 }
 
@@ -4178,11 +4178,12 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 	for i := 0; i < 0x100; i++ {
 		currSHA := fmt.Sprintf("%02x", i)
 		loadGHARepoDates(ctx, currSHA)
+		changed := false
 		if gGHARepoDates == nil {
 			gGHARepoDates = make(map[string]map[string]int)
+			changed = false
 		}
 		lib.Printf("updateGHARepodates: SHA: %s\n", currSHA)
-		changed := false
 		for sdt, repos := range gGHAMap {
 			dt := lib.ParseGHAString(sdt)
 			idt := int(dt.Unix() / int64(3600))
@@ -4310,64 +4311,12 @@ func cacheStats() {
 	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
 }
 
-// FIXME
-func convert(ctx *lib.Ctx) {
-	loadGHARepoDates(ctx, "00")
-	no := len(gGHARepoDates)
-	for i := 0; i < 0x100; i++ {
-		currSHA := fmt.Sprintf("%02x", i)
-		fmt.Printf("processing SHA %s\n", currSHA)
-		n, hit, miss, co := 0, 0, 0, 0
-		m := make(map[string]map[string]int)
-		for org, data := range gGHARepoDates {
-			co++
-			if co%1000000 == 0 {
-				fmt.Printf("%f%%...\n", float64(co*100)/float64(no))
-			}
-			for repo, ts := range data {
-				n++
-				orgRepo := []byte(org + "/" + repo)
-				if sha2b(orgRepo) == currSHA {
-					hit++
-					_, ok := m[org]
-					if !ok {
-						m[org] = make(map[string]int)
-					}
-					m[org][repo] = ts
-					continue
-				}
-				miss++
-			}
-		}
-		nm := len(m)
-		fmt.Printf("processed SHA %s, hit: %d, miss: %d, %.3f%%\n", currSHA, hit, miss, float64(100*hit)/float64(n))
-		path := "gha_map/" + currSHA + "_repo_dates.json"
-		lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, nm, n)
-		runGC()
-		bts, err := jsoniter.Marshal(m)
-		if err != nil {
-			lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", nm, n, path)
-			return
-		}
-		m = nil
-		runGC()
-		err = ioutil.WriteFile(path, bts, 0644)
-		if err != nil {
-			lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
-			return
-		}
-		lib.Printf("saved GHA map repo dates %s %d orgs, %d items, %d bytes\n", path, nm, n, len(bts))
-	}
-	os.Exit(1)
-}
-
 func main() {
 	var ctx lib.Ctx
 	dtStart := time.Now()
 	debug.SetGCPercent(25)
 	ctx.Init()
 	initDadsCtx(&ctx)
-	convert(&ctx)
 	path := os.Getenv("GHA_FIXTURES_DIR")
 	if len(os.Args) > 1 {
 		path = os.Args[1]
