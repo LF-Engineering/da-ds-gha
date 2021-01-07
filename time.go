@@ -101,6 +101,57 @@ func PrevWeekStart(dt time.Time) time.Time {
 	return WeekStart(dt).AddDate(0, 0, -7)
 }
 
+// NDaysStart - return time rounded to current n-days start
+func NDaysStart(dt time.Time, nDays int) time.Time {
+	d := ((dt.YearDay() - 1) / nDays) * nDays
+	return time.Date(
+		dt.Year(),
+		1,
+		1,
+		0,
+		0,
+		0,
+		0,
+		time.UTC,
+	).AddDate(0, 0, d)
+}
+
+// NextNDaysStart - return time rounded to next n-days start
+func NextNDaysStart(dt time.Time, nDays int) time.Time {
+	ndt := dt.AddDate(0, 0, nDays)
+	if ndt.Year() > dt.Year() {
+		return time.Date(
+			ndt.Year(),
+			1,
+			1,
+			0,
+			0,
+			0,
+			0,
+			time.UTC,
+		)
+	}
+	return NDaysStart(ndt, nDays)
+}
+
+// PrevNDaysStart - return time rounded to prev n-days start
+func PrevNDaysStart(dt time.Time, nDays int) time.Time {
+	pdt := dt.AddDate(0, 0, -nDays)
+	if pdt.Year() < dt.Year() {
+		pdt = time.Date(
+			pdt.Year(),
+			12,
+			31,
+			0,
+			0,
+			0,
+			0,
+			time.UTC,
+		)
+	}
+	return NDaysStart(pdt, nDays)
+}
+
 // MonthStart - return time rounded to current month start
 func MonthStart(dt time.Time) time.Time {
 	return time.Date(
@@ -230,6 +281,11 @@ func TimeParseES(dtStr string) (time.Time, error) {
 // ToYMDDate - return time formatted as YYYY-MM-DD
 func ToYMDDate(dt time.Time) string {
 	return fmt.Sprintf("%04d-%02d-%02d", dt.Year(), dt.Month(), dt.Day())
+}
+
+// ToPeriodDate - return time formatted as N-YYYYMMDD
+func ToPeriodDate(dt time.Time, nDays int) string {
+	return fmt.Sprintf("%d-%04d%02d%02d", nDays, dt.Year(), dt.Month(), dt.Day())
 }
 
 // ToYMDate - return time formatted as YYYYMM

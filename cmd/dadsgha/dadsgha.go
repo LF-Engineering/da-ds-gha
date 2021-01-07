@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -45,10 +47,13 @@ type ghaMapItem struct {
 // something like '(?i)^prometheus$' (compiled)
 
 const (
-	// cPrefix = "gha-"
-	cPrefix = "sds-"
+	// FIXME
+	cPrefix = "gha-"
+	// cPrefix = "sds-"
 	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
 	cMaxGitHubUsersFileCacheAge = 7776000
+	// cNDaysGHAPeriod - how many days cache in GHA map files at once
+	cNDaysGHAPeriod = 5
 )
 
 var (
@@ -2914,21 +2919,29 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	reAll, _ := config[[2]string{"", ""}]
 	rdts := make(map[string]time.Time)
 	lib.Printf("generating repo - start date mapping.\n")
-	for org, orgRepos := range gGHARepoDates {
-		for r, rdt := range orgRepos {
-			var repo string
-			if org == "" {
-				repo = r
-			} else {
-				repo = org + "/" + r
-			}
-			if !repoHit(repo, reAll) {
-				continue
-			}
-			dt := time.Unix(int64(rdt)*int64(3600), 0)
-			rdts[repo] = dt
-			if ctx.Debug > 0 {
-				lib.Printf("added %s with %s start date\n", repo, lib.ToGHADate2(dt))
+	for i := 0; i < 0x100; i++ {
+		currSHA := fmt.Sprintf("%02x", i)
+		loadGHARepoDates(ctx, currSHA)
+		if gGHARepoDates == nil {
+			lib.Printf("No GHA repo dates file for SHA %s, skipping\n", currSHA)
+			continue
+		}
+		for org, orgRepos := range gGHARepoDates {
+			for r, rdt := range orgRepos {
+				var repo string
+				if org == "" {
+					repo = r
+				} else {
+					repo = org + "/" + r
+				}
+				if !repoHit(repo, reAll) {
+					continue
+				}
+				dt := time.Unix(int64(rdt)*int64(3600), 0)
+				rdts[repo] = dt
+				if ctx.Debug > 0 {
+					lib.Printf("added %s with %s start date\n", repo, lib.ToGHADate2(dt))
+				}
 			}
 		}
 	}
@@ -3124,8 +3137,8 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 
 	// Parse to day & hour
 	var (
-		currNow      time.Time
-		currMonthEnd time.Time
+		currNow       time.Time
+		currPeriodEnd time.Time
 	)
 	dateToFunc := func() {
 		currNow = time.Now()
@@ -3145,11 +3158,11 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 			)
 			lib.FatalOnError(err)
 		}
-		if dTo.After(currMonthEnd) {
-			dTo = currMonthEnd
+		if dTo.After(currPeriodEnd) {
+			dTo = currPeriodEnd
 		}
 	}
-	currMonthEnd = lib.PrevHourStart(lib.NextMonthStart(dFrom))
+	currPeriodEnd = lib.PrevHourStart(lib.NextNDaysStart(dFrom, cNDaysGHAPeriod))
 	dateToFunc()
 	lib.Printf("Date range: %s - %s\n", lib.ToGHADate2(dFrom), lib.ToGHADate2(dTo))
 
@@ -3171,9 +3184,9 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	maxProcessed := gMinGHA
 	dt := dFrom
 	for {
-		currMonthEnd = lib.PrevHourStart(lib.NextMonthStart(dt))
+		currPeriodEnd = lib.PrevHourStart(lib.NextNDaysStart(dt, cNDaysGHAPeriod))
 		dateToFunc()
-		lib.Printf("Processing month %s - %s\n", lib.ToGHADate(dt), lib.ToGHADate(currMonthEnd))
+		lib.Printf("Processing period (%d days) %s - %s\n", cNDaysGHAPeriod, lib.ToGHADate(dt), lib.ToGHADate(currPeriodEnd))
 		if !ctx.NoGHAMap {
 			loadGHAMap(ctx, dt)
 			if gGHAMap == nil {
@@ -3219,14 +3232,12 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 			}
 		}
 		// Uncomment to update repo start dates when processing actual GHA data
-		// updateGHARepoDatesMonth(ctx)
-		dt = lib.NextHourStart(currMonthEnd)
+		// updateGHARepoDates(ctx)
+		dt = lib.NextHourStart(currPeriodEnd)
 		if !dt.Before(time.Now()) {
 			break
 		}
 	}
-	// Uncomment to save GHA month repo start dates when processing actual GHA data
-	// saveGHARepoDates(ctx)
 	if maxProcessed.After(gMinGHA) {
 		currentConfig := serializeConfig(config)
 		err = saveFixturesState(ctx, currentConfig, allRepos, maxProcessed)
@@ -3928,7 +3939,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 	if untilNow {
 		dDtTo = lib.PrevHourStart(time.Now())
 	} else {
-		dDtTo = lib.PrevHourStart(lib.NextMonthStart(dDtFrom))
+		dDtTo = lib.PrevHourStart(lib.NextNDaysStart(dDtFrom, cNDaysGHAPeriod))
 		lastGHAHour := lib.PrevHourStart(time.Now())
 		if dDtTo.After(lastGHAHour) {
 			dDtTo = lastGHAHour
@@ -3943,11 +3954,11 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 	}
 	dFrom := dDtFrom
 	for {
-		dTo := lib.PrevHourStart(lib.NextMonthStart(dFrom))
+		dTo := lib.PrevHourStart(lib.NextNDaysStart(dFrom, cNDaysGHAPeriod))
 		if dTo.After(dDtTo) {
 			dTo = dDtTo
 		}
-		lib.Printf("generating GHA map %s - %s\n", lib.ToGHADate(dFrom), lib.ToGHADate(dTo))
+		lib.Printf("generating GHA map (%d days) %s - %s\n", cNDaysGHAPeriod, lib.ToGHADate(dFrom), lib.ToGHADate(dTo))
 		if !detect {
 			gGHAMap = nil
 			gGHAMap = make(map[string]map[string]int)
@@ -3966,7 +3977,6 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 					if data.ok {
 						gGHAMap[data.key] = data.repos
 						maybeGC()
-						// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 					}
 				}
 			}
@@ -3976,7 +3986,6 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				if data.ok {
 					gGHAMap[data.key] = data.repos
 					maybeGC()
-					// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 				}
 			}
 		} else {
@@ -3985,7 +3994,6 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				if data.ok {
 					gGHAMap[data.key] = data.repos
 					maybeGC()
-					// updateGHARepoDatesHour(ctx, data.dt, data.repos)
 				}
 				dt = dt.Add(time.Hour)
 			}
@@ -3996,8 +4004,8 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		if save {
 			saveGHAMap(ctx, dFrom)
 		}
-		updateGHARepoDatesMonth(ctx)
-		dFrom = lib.NextMonthStart(dFrom)
+		updateGHARepoDates(ctx)
+		dFrom = lib.NextNDaysStart(dFrom, cNDaysGHAPeriod)
 		if !dFrom.Before(dDtTo) {
 			break
 		}
@@ -4013,16 +4021,16 @@ func loadGHAMap(ctx *lib.Ctx, dt time.Time) {
 	if ctx.NoGHAMap {
 		return
 	}
-	defer func() { runGC() }()
 	gGHAMap = nil
-	sdt := lib.ToYMDate(dt)
-	path := "gha_map_" + sdt + ".json"
+	sdt := lib.ToPeriodDate(dt, cNDaysGHAPeriod)
+	path := "gha_map/" + sdt + ".json"
 	lib.Printf("loading GHA map %s\n", path)
 	bts, err := ioutil.ReadFile(path)
 	if err != nil {
 		lib.Printf("cannot read GHA map file %s\n", path)
 		return
 	}
+	defer func() { runGC() }()
 	gGHAMap = make(map[string]map[string]int)
 	err = jsoniter.Unmarshal(bts, &gGHAMap)
 	if err != nil {
@@ -4041,8 +4049,8 @@ func saveGHAMap(ctx *lib.Ctx, dt time.Time) {
 		return
 	}
 	defer func() { runGC() }()
-	sdt := lib.ToYMDate(dt)
-	path := "gha_map_" + sdt + ".json"
+	sdt := lib.ToPeriodDate(dt, cNDaysGHAPeriod)
+	path := "gha_map/" + sdt + ".json"
 	runGC()
 	bts, err := jsoniter.Marshal(gGHAMap)
 	if err != nil {
@@ -4060,11 +4068,11 @@ func saveGHAMap(ctx *lib.Ctx, dt time.Time) {
 }
 
 func maxDateGHAMap(ctx *lib.Ctx) *time.Time {
-	dt := lib.MonthStart(time.Now())
+	dt := lib.NDaysStart(time.Now(), cNDaysGHAPeriod)
 	for {
 		loadGHAMap(ctx, dt)
 		if gGHAMap == nil {
-			dt = lib.PrevMonthStart(dt)
+			dt = lib.PrevNDaysStart(dt, cNDaysGHAPeriod)
 			if dt.Before(gMinGHA) {
 				return nil
 			}
@@ -4092,19 +4100,19 @@ func maxDateGHAMap(ctx *lib.Ctx) *time.Time {
 	return &tm
 }
 
-func loadGHARepoDates(ctx *lib.Ctx) {
+func loadGHARepoDates(ctx *lib.Ctx, sha2 string) {
 	gGHARepoDates = nil
 	if ctx.NoGHARepoDates {
 		return
 	}
-	defer func() { runGC() }()
-	path := "gha_map_repo_dates.json"
+	path := "gha_map/" + sha2 + "_repo_dates.json"
 	lib.Printf("loading GHA map repo dates %s\n", path)
 	bts, err := ioutil.ReadFile(path)
 	if err != nil {
 		lib.Printf("cannot read GHA map repo dates file %s\n", path)
 		return
 	}
+	defer func() { runGC() }()
 	gGHARepoDates = make(map[string]map[string]int)
 	err = jsoniter.Unmarshal(bts, &gGHARepoDates)
 	if err != nil {
@@ -4119,7 +4127,7 @@ func loadGHARepoDates(ctx *lib.Ctx) {
 	return
 }
 
-func saveGHARepoDates(ctx *lib.Ctx) {
+func saveGHARepoDates(ctx *lib.Ctx, sha2 string) {
 	if ctx.NoGHARepoDates || gGHARepoDates == nil {
 		return
 	}
@@ -4131,7 +4139,7 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	for _, repos := range gGHARepoDates {
 		nRepos += len(repos)
 	}
-	path := "gha_map_repo_dates.json"
+	path := "gha_map/" + sha2 + "_repo_dates.json"
 	lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, len(gGHARepoDates), nRepos)
 	runGC()
 	bts, err := jsoniter.Marshal(gGHARepoDates)
@@ -4149,120 +4157,85 @@ func saveGHARepoDates(ctx *lib.Ctx) {
 	return
 }
 
-func updateGHARepoDatesMonth(ctx *lib.Ctx) {
+func sha2s(s string) string {
+	h := sha1.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))[:2]
+}
+
+func sha2b(b []byte) string {
+	h := sha1.New()
+	h.Write(b)
+	return hex.EncodeToString(h.Sum(nil))[:2]
+}
+
+func updateGHARepoDates(ctx *lib.Ctx) {
 	if ctx.NoGHARepoDates {
 		return
 	}
 	defer func() { runGC() }()
-	if gGHARepoDates == nil {
-		gGHARepoDates = make(map[string]map[string]int)
-	}
-	had := 0
-	if ctx.Debug > 0 {
-		for _, repos := range gGHARepoDates {
-			had += len(repos)
+	changedItems, updatedSHAs := 0, 0
+	for i := 0; i < 0x100; i++ {
+		currSHA := fmt.Sprintf("%02x", i)
+		loadGHARepoDates(ctx, currSHA)
+		if gGHARepoDates == nil {
+			gGHARepoDates = make(map[string]map[string]int)
 		}
-	}
-	for sdt, repos := range gGHAMap {
-		dt := lib.ParseGHAString(sdt)
-		idt := int(dt.Unix() / int64(3600))
-		for r := range repos {
-			ary := strings.Split(r, "/")
-			lAry := len(ary)
-			var (
-				org  string
-				repo string
-			)
-			if lAry == 1 {
-				org = ""
-				repo = ary[0]
-			} else if lAry == 2 {
-				org = ary[0]
-				repo = ary[1]
-			} else {
-				org = ary[0]
-				repo = strings.Join(ary[1:], "/")
-			}
-			orgRepos, ok := gGHARepoDates[org]
-			if !ok {
-				gGHARepoDates[org] = make(map[string]int)
-				gGHARepoDates[org][repo] = idt
-				continue
-			}
-			ridt, ok := orgRepos[repo]
-			if ok {
-				if idt < ridt {
-					gGHARepoDates[org][repo] = idt
+		lib.Printf("updateGHARepodates: SHA: %s\n", currSHA)
+		changed := false
+		for sdt, repos := range gGHAMap {
+			dt := lib.ParseGHAString(sdt)
+			idt := int(dt.Unix() / int64(3600))
+			for r := range repos {
+				if sha2s(r) != currSHA {
+					continue
 				}
-				continue
-			}
-			gGHARepoDates[org][repo] = idt
-		}
-	}
-	have := 0
-	if ctx.Debug > 0 {
-		for _, repos := range gGHARepoDates {
-			have += len(repos)
-		}
-		lib.Printf("%d -> %d repo start dates\n", had, have)
-	}
-}
-
-func updateGHARepoDatesHour(ctx *lib.Ctx, dt time.Time, repos map[string]int) {
-	// Not deferring GC because this is too often - it's for every hour
-	//defer func() { runGC() }()
-	if ctx.NoGHARepoDates {
-		return
-	}
-	if gGHARepoDates == nil {
-		gGHARepoDates = make(map[string]map[string]int)
-	}
-	had := 0
-	if ctx.Debug > 0 {
-		for _, repos := range gGHARepoDates {
-			had += len(repos)
-		}
-	}
-	idt := int(dt.Unix() / int64(3600))
-	for r := range repos {
-		ary := strings.Split(r, "/")
-		lAry := len(ary)
-		var (
-			org  string
-			repo string
-		)
-		if lAry == 1 {
-			org = ""
-			repo = ary[0]
-		} else if lAry == 2 {
-			org = ary[0]
-			repo = ary[1]
-		} else {
-			org = ary[0]
-			repo = strings.Join(ary[1:], "/")
-		}
-		orgRepos, ok := gGHARepoDates[org]
-		if !ok {
-			gGHARepoDates[org] = make(map[string]int)
-			gGHARepoDates[org][repo] = idt
-			continue
-		}
-		ridt, ok := orgRepos[repo]
-		if ok {
-			if idt < ridt {
+				ary := strings.Split(r, "/")
+				lAry := len(ary)
+				var (
+					org  string
+					repo string
+				)
+				if lAry == 1 {
+					org = ""
+					repo = ary[0]
+				} else if lAry == 2 {
+					org = ary[0]
+					repo = ary[1]
+				} else {
+					org = ary[0]
+					repo = strings.Join(ary[1:], "/")
+				}
+				orgRepos, ok := gGHARepoDates[org]
+				if !ok {
+					gGHARepoDates[org] = make(map[string]int)
+					gGHARepoDates[org][repo] = idt
+					changed = true
+					changedItems++
+					continue
+				}
+				ridt, ok := orgRepos[repo]
+				if ok {
+					if idt < ridt {
+						gGHARepoDates[org][repo] = idt
+						changed = true
+						changedItems++
+					}
+					continue
+				}
 				gGHARepoDates[org][repo] = idt
+				changed = true
+				changedItems++
 			}
-			continue
 		}
-		gGHARepoDates[org][repo] = idt
-	}
-	have := 0
-	if ctx.Debug > 0 {
-		for _, repos := range gGHARepoDates {
-			have += len(repos)
+		if changed {
+			saveGHARepoDates(ctx, currSHA)
+			updatedSHAs++
 		}
-		lib.Printf("%v: %d -> %d repo start dates\n", lib.ToGHADate(dt), had, have)
+		gGHARepoDates = nil
+		runGC()
 	}
+	lib.Printf("Updated SHAs: %d, items: %d\n", updatedSHAs, changedItems)
 }
 
 func handleGHAMap(ctx *lib.Ctx) {
@@ -4270,38 +4243,20 @@ func handleGHAMap(ctx *lib.Ctx) {
 		return
 	}
 	defer func() { runGC() }()
-	loadGHARepoDates(ctx)
-	had := 0
-	if !ctx.NoGHARepoDates {
-		for _, repos := range gGHARepoDates {
-			had += len(repos)
-		}
-	}
 	maxDt := maxDateGHAMap(ctx)
 	if maxDt == nil {
 		_ = generateGHAMap(ctx, nil, true, false, true)
 	} else {
 		nextHour := lib.NextHourStart(*maxDt)
-		nextMonth := lib.NextMonthStart(*maxDt)
-		if nextHour.Before(nextMonth) {
+		nextPeriod := lib.NextNDaysStart(*maxDt, cNDaysGHAPeriod)
+		if nextHour.Before(nextPeriod) {
 			changed := generateGHAMap(ctx, maxDt, false, true, false)
 			if changed {
 				saveGHAMap(ctx, *maxDt)
 			}
 		}
-		if nextMonth.Before(time.Now()) {
+		if nextPeriod.Before(time.Now()) {
 			_ = generateGHAMap(ctx, maxDt, true, false, true)
-		}
-	}
-	have := 0
-	if !ctx.NoGHARepoDates {
-		for _, repos := range gGHARepoDates {
-			have += len(repos)
-		}
-		if have != had {
-			saveGHARepoDates(ctx)
-		} else {
-			lib.Printf("no new repo start dates detected\n")
 		}
 	}
 }
@@ -4355,15 +4310,71 @@ func cacheStats() {
 	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
 }
 
+// FIXME
+func convert(ctx *lib.Ctx) {
+	loadGHARepoDates(ctx, "00")
+	no := len(gGHARepoDates)
+	for i := 0; i < 0x100; i++ {
+		currSHA := fmt.Sprintf("%02x", i)
+		fmt.Printf("processing SHA %s\n", currSHA)
+		n, hit, miss, co := 0, 0, 0, 0
+		m := make(map[string]map[string]int)
+		for org, data := range gGHARepoDates {
+			co++
+			if co%1000000 == 0 {
+				fmt.Printf("%f%%...\n", float64(co*100)/float64(no))
+			}
+			for repo, ts := range data {
+				n++
+				orgRepo := []byte(org + "/" + repo)
+				if sha2b(orgRepo) == currSHA {
+					hit++
+					_, ok := m[org]
+					if !ok {
+						m[org] = make(map[string]int)
+					}
+					m[org][repo] = ts
+					continue
+				}
+				miss++
+			}
+		}
+		nm := len(m)
+		fmt.Printf("processed SHA %s, hit: %d, miss: %d, %.3f%%\n", currSHA, hit, miss, float64(100*hit)/float64(n))
+		path := "gha_map/" + currSHA + "_repo_dates.json"
+		lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, nm, n)
+		runGC()
+		bts, err := jsoniter.Marshal(m)
+		if err != nil {
+			lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", nm, n, path)
+			return
+		}
+		m = nil
+		runGC()
+		err = ioutil.WriteFile(path, bts, 0644)
+		if err != nil {
+			lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
+			return
+		}
+		lib.Printf("saved GHA map repo dates %s %d orgs, %d items, %d bytes\n", path, nm, n, len(bts))
+	}
+	os.Exit(1)
+}
+
 func main() {
 	var ctx lib.Ctx
 	dtStart := time.Now()
 	debug.SetGCPercent(25)
 	ctx.Init()
 	initDadsCtx(&ctx)
+	convert(&ctx)
 	path := os.Getenv("GHA_FIXTURES_DIR")
 	if len(os.Args) > 1 {
 		path = os.Args[1]
+	}
+	if path == "" {
+		lib.Printf("you need to specify fixtures to process either by env variable GHA_FIXTURES_DIR or as an argument\n")
+		return
 	}
 	handleMT(&ctx)
 	var (
