@@ -735,7 +735,7 @@ func saveConfigStartDates(ctx *lib.Ctx, startDates map[string]map[string]time.Ti
 	if err != nil {
 		return
 	}
-	fn := ctx.ConfigFile + "_dates.json"
+	fn := ctx.ConfigFile + "dates.json"
 	err = ioutil.WriteFile(fn, bts, 0644)
 	return
 }
@@ -751,13 +751,13 @@ func saveConfigFixtures(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, allRe
 	if err != nil {
 		return
 	}
-	fn := ctx.ConfigFile + "_fixtures.json"
+	fn := ctx.ConfigFile + "fixtures.json"
 	err = ioutil.WriteFile(fn, bts, 0644)
 	bts, err = jsoniter.Marshal(allRepos)
 	if err != nil {
 		return
 	}
-	fn = ctx.ConfigFile + "_repos.json"
+	fn = ctx.ConfigFile + "repos.json"
 	err = ioutil.WriteFile(fn, bts, 0644)
 	return
 }
@@ -769,7 +769,7 @@ func loadConfigStartDates(ctx *lib.Ctx) (startDates map[string]map[string]time.T
 		}
 	}()
 	var bts []byte
-	fn := ctx.ConfigFile + "_dates.json"
+	fn := ctx.ConfigFile + "dates.json"
 	bts, err = ioutil.ReadFile(fn)
 	if err != nil {
 		return
@@ -785,7 +785,7 @@ func loadConfigFixtures(ctx *lib.Ctx) (config map[[2]string]*regexp.Regexp, allR
 		}
 	}()
 	var bts []byte
-	fn := ctx.ConfigFile + "_fixtures.json"
+	fn := ctx.ConfigFile + "fixtures.json"
 	bts, err = ioutil.ReadFile(fn)
 	if err != nil {
 		return
@@ -793,7 +793,7 @@ func loadConfigFixtures(ctx *lib.Ctx) (config map[[2]string]*regexp.Regexp, allR
 	var data map[string]string
 	err = jsoniter.Unmarshal(bts, &data)
 	config = deserializeConfig(data)
-	fn = ctx.ConfigFile + "_repos.json"
+	fn = ctx.ConfigFile + "repos.json"
 	bts, err = ioutil.ReadFile(fn)
 	if err != nil {
 		return
