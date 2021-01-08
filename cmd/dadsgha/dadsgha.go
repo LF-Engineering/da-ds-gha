@@ -75,6 +75,8 @@ var (
 	gGitHubReposMtx     *sync.RWMutex
 	gJSONsBytesMtx      *sync.Mutex
 	gJSONsLockMtx       *sync.Mutex
+	gJSONsL2Mtx         *sync.Mutex
+	gJSONsLocked        bool
 	gAllJSONsBytes      int64
 	gMaxJSONsBytes      int64
 	gRichItems          = map[string]map[string]interface{}{}
@@ -2873,7 +2875,6 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 		_ = response.Body.Close()
 		reader = nil
 		response = nil
-		handleJSONsBytesLimit(ctx, nJSONsBytes)
 		// lib.FatalOnError(err)
 		if err != nil {
 			lib.Printf("%v: Error (no data yet, ioutil readall):\n%v\n", dt, err)
@@ -2886,6 +2887,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			return
 		}
 		nJSONsBytes = int64(len(jsonsBytes))
+		handleJSONsBytesLimit(ctx, nJSONsBytes)
 		if trials > 1 {
 			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, nJSONsBytes)
 		} else {
@@ -2898,7 +2900,6 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	jsonsArray := bytes.Split(jsonsBytes, []byte("\n"))
 	lib.Printf("Split %s, %d JSONs\n", fn, len(jsonsArray))
 	jsonsBytes = nil
-	handleJSONsBytesLimit(ctx, -nJSONsBytes)
 
 	// Process JSONs one by one
 	n, f, r := 0, 0, 0
@@ -2912,6 +2913,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 		f += fi
 		r += ri
 	}
+	handleJSONsBytesLimit(ctx, -nJSONsBytes)
 	lib.Printf(
 		"Parsed: %s: %d JSONs, found %d matching, enriched %d (%s)\n",
 		fn, n, f, r, printStatDesc(stat),
@@ -3939,7 +3941,6 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 		_ = response.Body.Close()
 		reader = nil
 		response = nil
-		handleJSONsBytesLimit(ctx, nJSONsBytes)
 		// lib.FatalOnError(err)
 		if err != nil {
 			lib.Printf("%v: Error (no data yet, ioutil readall):\n%v\n", dt, err)
@@ -3952,6 +3953,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 			return
 		}
 		nJSONsBytes = int64(len(jsonsBytes))
+		handleJSONsBytesLimit(ctx, nJSONsBytes)
 		if trials > 1 {
 			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, nJSONsBytes)
 		} else {
@@ -3964,7 +3966,6 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 	jsonsArray := bytes.Split(jsonsBytes, []byte("\n"))
 	lib.Printf("Split %s, %d JSONs\n", fn, len(jsonsArray))
 	jsonsBytes = nil
-	handleJSONsBytesLimit(ctx, -nJSONsBytes)
 
 	// Process JSONs one by one
 	n := 0
@@ -3975,11 +3976,15 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 		previewJSON(ctx, json, dt, repos)
 		n++
 	}
+	handleJSONsBytesLimit(ctx, -nJSONsBytes)
 	lib.Printf("Previewed: %s: %d JSONs, %d repos\n", fn, n, len(repos))
 	return
 }
 
 func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
+	if diff == 0 {
+		return
+	}
 	s := ""
 	lock := false
 	unlock := false
@@ -4011,16 +4016,36 @@ func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
 	if gJSONsBytesMtx != nil {
 		gJSONsBytesMtx.Unlock()
 	}
-	if s != "" {
-		lib.Printf("%s", s)
-	}
 	if gJSONsLockMtx != nil {
 		if unlock {
-			gJSONsLockMtx.Unlock()
+			if gJSONsL2Mtx != nil {
+				gJSONsL2Mtx.Lock()
+			}
+			if gJSONsLocked {
+				gJSONsLockMtx.Unlock()
+				gJSONsLocked = false
+				s += "JSONs unlocked\n"
+			}
+			if gJSONsL2Mtx != nil {
+				gJSONsL2Mtx.Unlock()
+			}
 		}
 		if lock {
-			gJSONsLockMtx.Lock()
+			if gJSONsL2Mtx != nil {
+				gJSONsL2Mtx.Lock()
+			}
+			if !gJSONsLocked {
+				gJSONsLockMtx.Lock()
+				gJSONsLocked = true
+				s += "JSONs locked\n"
+			}
+			if gJSONsL2Mtx != nil {
+				gJSONsL2Mtx.Unlock()
+			}
 		}
+	}
+	if s != "" {
+		lib.Printf("%s", s)
 	}
 }
 
@@ -4441,6 +4466,7 @@ func handleMT(ctx *lib.Ctx) {
 		gGitHubReposMtx = &sync.RWMutex{}
 		gJSONsBytesMtx = &sync.Mutex{}
 		gJSONsLockMtx = &sync.Mutex{}
+		gJSONsL2Mtx = &sync.Mutex{}
 		dads.SetMT()
 	}
 }
