@@ -47,9 +47,8 @@ type ghaMapItem struct {
 // something like '(?i)^prometheus$' (compiled)
 
 const (
-	// FIXME
-	cPrefix = "gha-"
-	// cPrefix = "sds-"
+	// cPrefix = "gha-"
+	cPrefix = "sds-"
 	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
 	cMaxGitHubUsersFileCacheAge = 7776000
 	// cNDaysGHAPeriod - how many days cache in GHA map files at once
@@ -4226,7 +4225,7 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 			ghaRepoDates = make(map[string]map[string]int)
 			changed = false
 		}
-		lib.Printf("updateGHARepodates: SHA: %s\n", currSHA)
+		lib.Printf("updateGHARepoDates: SHA: %s\n", currSHA)
 		for sdt, repos := range gGHAMap {
 			dt := lib.ParseGHAString(sdt)
 			idt := int(dt.Unix() / int64(3600))
