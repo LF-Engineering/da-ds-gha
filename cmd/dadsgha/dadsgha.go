@@ -4521,15 +4521,14 @@ func runGC() {
 	lib.Printf(getMemUsage() + "\n")
 }
 
-func memGCHeartBeat() {
+func memGCHeartBeat(ctx *lib.Ctx) {
 	var m runtime.MemStats
 	for {
-		time.Sleep(time.Duration(30) * time.Second)
+		time.Sleep(time.Duration(15) * time.Second)
 		runtime.GC()
 		runtime.ReadMemStats(&m)
-		mbAlloc := m.Alloc >> 20
-		if mbAlloc > 10240 {
-			lib.Printf("mem alloc heartbeat: %dM\n", mbAlloc)
+		if if ctx.MemHeartBeatBytes && int64(m.Alloc) > ctx.MemHeartBeatBytes {
+			lib.Printf("WARNING: mem alloc heartbeat, exceeded limit %dM: %dM\n", ctx.MemHeartBeatBytes>>20, m.Alloc>>20)
 		}
 	}
 }
@@ -4576,7 +4575,7 @@ func main() {
 		allRepos   []string
 		startDates map[string]map[string]time.Time
 	)
-	go memGCHeartBeat()
+	go memGCHeartBeat(&ctx)
 	if ctx.LoadConfig {
 		var err error
 		config, allRepos, err = loadConfigFixtures(&ctx)
