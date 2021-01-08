@@ -4620,6 +4620,7 @@ func cacheStats() {
 	lib.Printf("GitHub API users: %d\n", len(gGitHubUsers))
 	lib.Printf("GitHub API repos: %d\n", len(gGitHubRepos))
 	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
+	lib.Printf("biggest uncompressed JSONs size from a single GHA hour: %dM\n", gMaxJSONsBytes>>20)
 }
 
 func main() {
