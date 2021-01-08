@@ -1,4 +1,5 @@
 #/bin/bash
+cd /root/go/src/github.com/LF-Engineering/da-ds-gha/ || exit 1
 export GHA_NCPUS=''
 export GHA_NO_GHA_MAP=''
 export GHA_DB_BULK_SIZE=''
@@ -12,6 +13,7 @@ export GHA_HOUR_TO=''
 export GHA_DAY_FROM=''
 export GHA_DAY_TO=''
 export GHA_NO_GHA_REPO_DATES=1
+export GHA_MAX_PARALLEL_SHAS=12
 export GHA_ES_URL="`cat ES_URL.test.secret`"
 export GHA_DB_CONN="`cat DB_CONN.test.secret`"
 export GHA_GITHUB_OAUTH="`cat OAUTHS.secret`"

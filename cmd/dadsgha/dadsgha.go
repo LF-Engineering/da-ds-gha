@@ -47,6 +47,7 @@ type ghaMapItem struct {
 // something like '(?i)^prometheus$' (compiled)
 
 const (
+	// FIXME
 	// cPrefix = "gha-"
 	cPrefix = "sds-"
 	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
@@ -2917,7 +2918,11 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	reAll, _ := config[[2]string{"", ""}]
 	rdts := make(map[string]time.Time)
 	var rdtsMtx *sync.Mutex
-	if gThrN > 1 {
+	thrN := gThrN
+	if ctx.MaxParallelSHAs > 0 && thrN > ctx.MaxParallelSHAs {
+		thrN = ctx.MaxParallelSHAs
+	}
+	if thrN > 1 {
 		rdtsMtx = &sync.Mutex{}
 	}
 	lib.Printf("generating repo - start date mapping.\n")
@@ -2959,14 +2964,14 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 		ghaRepoDates = nil
 		runGC()
 	}
-	if gThrN > 1 {
+	if thrN > 1 {
 		nThreads := 0
 		ch := make(chan struct{})
 		for i := 0; i < 0x100; i++ {
 			cSHA := fmt.Sprintf("%02x", i)
 			go processSHA(ch, cSHA)
 			nThreads++
-			if nThreads == gThrN {
+			if nThreads == thrN {
 				<-ch
 				nThreads--
 			}
@@ -4209,7 +4214,11 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 	}
 	defer func() { runGC() }()
 	var mtx *sync.Mutex
-	if gThrN > 1 {
+	thrN := gThrN
+	if ctx.MaxParallelSHAs > 0 && thrN > ctx.MaxParallelSHAs {
+		thrN = ctx.MaxParallelSHAs
+	}
+	if thrN > 1 {
 		mtx = &sync.Mutex{}
 	}
 	changedItems, updatedSHAs := 0, 0
@@ -4302,14 +4311,14 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 		ghaRepoDates = nil
 		runGC()
 	}
-	if gThrN > 1 {
+	if thrN > 1 {
 		nThreads := 0
 		ch := make(chan struct{})
 		for i := 0; i < 0x100; i++ {
 			cSHA := fmt.Sprintf("%02x", i)
 			go processSHA(ch, cSHA)
 			nThreads++
-			if nThreads == gThrN {
+			if nThreads == thrN {
 				<-ch
 				nThreads--
 			}

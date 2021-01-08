@@ -27,6 +27,7 @@ type Ctx struct {
 	NoGHARepoDates   bool     // From GHA_NO_GHA_REPO_DATES, if set, it will skip GHA repo dates processing (file is huge, requires around 30G of memory), GHA map files can still be processed
 	ConfigFile       string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config" (gha_config_fixtures.json, gha_config_dates.json)
 	GapURL           string   // From GHA_GAP_URL, address of the GAP API
+	MaxParallelSHAs  int      // From GHA_MAX_PARALLEL_SHAS, maximum number of GHA repo dates SHA files to process in parallel, setting to 0 means unlimited (basically NCPUS)
 	TestMode         bool     // True when running tests
 	OAuthKeys        []string // GitHub oauth keys recevide from GHA_GITHUB_OAUTH configuration (initialized only when lib.GHClient() is called)
 }
@@ -112,6 +113,15 @@ func (ctx *Ctx) Init() {
 		FatalOnError(err)
 		if esBulkSize > 0 {
 			ctx.ESBulkSize = esBulkSize
+		}
+	}
+
+	// Max parallel SHAs
+	if os.Getenv("GHA_MAX_PARALLEL_SHAS") != "" {
+		maxParallelSHAs, err := strconv.Atoi(os.Getenv("GHA_MAX_PARALLEL_SHAS"))
+		FatalOnError(err)
+		if maxParallelSHAs > 0 {
+			ctx.MaxParallelSHAs = maxParallelSHAs
 		}
 	}
 }
