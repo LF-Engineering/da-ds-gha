@@ -63,7 +63,6 @@ var (
 	gHint               int
 	gThrN               int
 	gGHAMap             map[string]map[string]int
-	gGHARepoDates       map[string]map[string]int
 	gRichMtx            *sync.Mutex
 	gEnsuredIndicesMtx  *sync.Mutex
 	gUploadMtx          *sync.Mutex
@@ -2908,7 +2907,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 }
 
 func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, dss map[string]map[string]string, startDates map[string]map[string]time.Time) (minFrom time.Time) {
-	if ctx.NoGHARepoDates || gGHARepoDates == nil {
+	if ctx.NoGHARepoDates {
 		minFrom = gMinGHA
 		return
 	}
@@ -2921,12 +2920,12 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	lib.Printf("generating repo - start date mapping.\n")
 	for i := 0; i < 0x100; i++ {
 		currSHA := fmt.Sprintf("%02x", i)
-		loadGHARepoDates(ctx, currSHA)
-		if gGHARepoDates == nil {
+		ghaRepoDates := loadGHARepoDates(ctx, currSHA)
+		if ghaRepoDates == nil {
 			lib.Printf("No GHA repo dates file for SHA %s, skipping\n", currSHA)
 			continue
 		}
-		for org, orgRepos := range gGHARepoDates {
+		for org, orgRepos := range ghaRepoDates {
 			for r, rdt := range orgRepos {
 				var repo string
 				if org == "" {
@@ -2944,9 +2943,10 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 				}
 			}
 		}
+		ghaRepoDates = nil
+		runGC()
 	}
 	lib.Printf("generated repo - start date mapping with %d hits\n", len(rdts))
-	gGHARepoDates = nil
 	runGC()
 	for key, re := range config {
 		// Do not include all fixtures combined RE
@@ -4100,8 +4100,7 @@ func maxDateGHAMap(ctx *lib.Ctx) *time.Time {
 	return &tm
 }
 
-func loadGHARepoDates(ctx *lib.Ctx, sha2 string) {
-	gGHARepoDates = nil
+func loadGHARepoDates(ctx *lib.Ctx, sha2 string) (ghaRepoDates map[string]map[string]int) {
 	if ctx.NoGHARepoDates {
 		return
 	}
@@ -4113,38 +4112,38 @@ func loadGHARepoDates(ctx *lib.Ctx, sha2 string) {
 		return
 	}
 	defer func() { runGC() }()
-	gGHARepoDates = make(map[string]map[string]int)
-	err = jsoniter.Unmarshal(bts, &gGHARepoDates)
+	ghaRepoDates = make(map[string]map[string]int)
+	err = jsoniter.Unmarshal(bts, &ghaRepoDates)
 	if err != nil {
 		lib.Printf("cannot unmarshal from GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
 	nRepos := 0
-	for _, repos := range gGHARepoDates {
+	for _, repos := range ghaRepoDates {
 		nRepos += len(repos)
 	}
-	lib.Printf("loaded GHA map repo dates %d orgs, %d repos\n", len(gGHARepoDates), nRepos)
+	lib.Printf("loaded GHA map repo dates %d orgs, %d repos\n", len(ghaRepoDates), nRepos)
 	return
 }
 
-func saveGHARepoDates(ctx *lib.Ctx, sha2 string) {
-	if ctx.NoGHARepoDates || gGHARepoDates == nil {
+func saveGHARepoDates(ctx *lib.Ctx, sha2 string, ghaRepoDates map[string]map[string]int) {
+	if ctx.NoGHARepoDates || ghaRepoDates == nil {
 		return
 	}
-	if len(gGHARepoDates) < 1 {
+	if len(ghaRepoDates) < 1 {
 		return
 	}
 	defer func() { runGC() }()
 	nRepos := 0
-	for _, repos := range gGHARepoDates {
+	for _, repos := range ghaRepoDates {
 		nRepos += len(repos)
 	}
 	path := "gha_map/" + sha2 + "_repo_dates.json"
-	lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, len(gGHARepoDates), nRepos)
+	lib.Printf("saving GHA map repo dates %s %d orgs, %d items\n", path, len(ghaRepoDates), nRepos)
 	runGC()
-	bts, err := jsoniter.Marshal(gGHARepoDates)
+	bts, err := jsoniter.Marshal(ghaRepoDates)
 	if err != nil {
-		lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", len(gGHARepoDates), nRepos, path)
+		lib.Printf("cannot marshal GHA map repo dates with %d orgs, %d items to file %s\n", len(ghaRepoDates), nRepos, path)
 		return
 	}
 	runGC()
@@ -4153,7 +4152,7 @@ func saveGHARepoDates(ctx *lib.Ctx, sha2 string) {
 		lib.Printf("cannot write GHA map repo dates file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	lib.Printf("saved GHA map repo dates %s %d orgs, %d items, %d bytes\n", path, len(gGHARepoDates), nRepos, len(bts))
+	lib.Printf("saved GHA map repo dates %s %d orgs, %d items, %d bytes\n", path, len(ghaRepoDates), nRepos, len(bts))
 	return
 }
 
@@ -4177,10 +4176,10 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 	changedItems, updatedSHAs := 0, 0
 	for i := 0; i < 0x100; i++ {
 		currSHA := fmt.Sprintf("%02x", i)
-		loadGHARepoDates(ctx, currSHA)
+		ghaRepoDates := loadGHARepoDates(ctx, currSHA)
 		changed := false
-		if gGHARepoDates == nil {
-			gGHARepoDates = make(map[string]map[string]int)
+		if ghaRepoDates == nil {
+			ghaRepoDates = make(map[string]map[string]int)
 			changed = false
 		}
 		lib.Printf("updateGHARepodates: SHA: %s\n", currSHA)
@@ -4207,10 +4206,10 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 					org = ary[0]
 					repo = strings.Join(ary[1:], "/")
 				}
-				orgRepos, ok := gGHARepoDates[org]
+				orgRepos, ok := ghaRepoDates[org]
 				if !ok {
-					gGHARepoDates[org] = make(map[string]int)
-					gGHARepoDates[org][repo] = idt
+					ghaRepoDates[org] = make(map[string]int)
+					ghaRepoDates[org][repo] = idt
 					changed = true
 					changedItems++
 					continue
@@ -4218,22 +4217,22 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 				ridt, ok := orgRepos[repo]
 				if ok {
 					if idt < ridt {
-						gGHARepoDates[org][repo] = idt
+						ghaRepoDates[org][repo] = idt
 						changed = true
 						changedItems++
 					}
 					continue
 				}
-				gGHARepoDates[org][repo] = idt
+				ghaRepoDates[org][repo] = idt
 				changed = true
 				changedItems++
 			}
 		}
 		if changed {
-			saveGHARepoDates(ctx, currSHA)
+			saveGHARepoDates(ctx, currSHA, ghaRepoDates)
 			updatedSHAs++
 		}
-		gGHARepoDates = nil
+		ghaRepoDates = nil
 		runGC()
 	}
 	lib.Printf("Updated SHAs: %d, items: %d\n", updatedSHAs, changedItems)
