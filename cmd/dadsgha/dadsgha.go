@@ -73,6 +73,10 @@ var (
 	gDadsCtx            dads.Ctx
 	gIdentityMtx        *sync.Mutex
 	gGitHubReposMtx     *sync.RWMutex
+	gJSONsBytesMtx      *sync.Mutex
+	gJSONsLockMtx       *sync.Mutex
+	gAllJSONsBytes      int64
+	gMaxJSONsBytes      int64
 	gRichItems          = map[string]map[string]interface{}{}
 	gEnsuredIndices     = map[string]struct{}{}
 	gGitHubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
@@ -2826,7 +2830,10 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	// Get gzipped JSON array via HTTP
 	trials := 0
 	httpRetry := 5
-	var jsonsBytes []byte
+	var (
+		jsonsBytes  []byte
+		nJSONsBytes int64
+	)
 	for {
 		trials++
 		if trials > 1 {
@@ -2866,6 +2873,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 		_ = response.Body.Close()
 		reader = nil
 		response = nil
+		handleJSONsBytesLimit(ctx, nJSONsBytes)
 		// lib.FatalOnError(err)
 		if err != nil {
 			lib.Printf("%v: Error (no data yet, ioutil readall):\n%v\n", dt, err)
@@ -2877,10 +2885,11 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			lib.Printf("Gave up on %+v\n", dt)
 			return
 		}
+		nJSONsBytes = int64(len(jsonsBytes))
 		if trials > 1 {
-			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, len(jsonsBytes))
+			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, nJSONsBytes)
 		} else {
-			lib.Printf("Decompressed %s (%d bytes)\n", fn, len(jsonsBytes))
+			lib.Printf("Decompressed %s (%d bytes)\n", fn, nJSONsBytes)
 		}
 		break
 	}
@@ -2889,6 +2898,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	jsonsArray := bytes.Split(jsonsBytes, []byte("\n"))
 	lib.Printf("Split %s, %d JSONs\n", fn, len(jsonsArray))
 	jsonsBytes = nil
+	handleJSONsBytesLimit(ctx, -nJSONsBytes)
 
 	// Process JSONs one by one
 	n, f, r := 0, 0, 0
@@ -3886,7 +3896,10 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 	// Get gzipped JSON array via HTTP
 	trials := 0
 	httpRetry := 5
-	var jsonsBytes []byte
+	var (
+		jsonsBytes  []byte
+		nJSONsBytes int64
+	)
 	for {
 		trials++
 		if trials > 1 {
@@ -3926,6 +3939,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 		_ = response.Body.Close()
 		reader = nil
 		response = nil
+		handleJSONsBytesLimit(ctx, nJSONsBytes)
 		// lib.FatalOnError(err)
 		if err != nil {
 			lib.Printf("%v: Error (no data yet, ioutil readall):\n%v\n", dt, err)
@@ -3937,10 +3951,11 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 			lib.Printf("Gave up on %+v\n", dt)
 			return
 		}
+		nJSONsBytes = int64(len(jsonsBytes))
 		if trials > 1 {
-			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, len(jsonsBytes))
+			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, nJSONsBytes)
 		} else {
-			lib.Printf("Decompressed %s (%d bytes)\n", fn, len(jsonsBytes))
+			lib.Printf("Decompressed %s (%d bytes)\n", fn, nJSONsBytes)
 		}
 		break
 	}
@@ -3949,6 +3964,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 	jsonsArray := bytes.Split(jsonsBytes, []byte("\n"))
 	lib.Printf("Split %s, %d JSONs\n", fn, len(jsonsArray))
 	jsonsBytes = nil
+	handleJSONsBytesLimit(ctx, -nJSONsBytes)
 
 	// Process JSONs one by one
 	n := 0
@@ -3961,6 +3977,51 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 	}
 	lib.Printf("Previewed: %s: %d JSONs, %d repos\n", fn, n, len(repos))
 	return
+}
+
+func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
+	s := ""
+	lock := false
+	unlock := false
+	mdiff := -diff
+	if gJSONsBytesMtx != nil {
+		gJSONsBytesMtx.Lock()
+	}
+	if diff > 0 {
+		if diff > gMaxJSONsBytes {
+			gMaxJSONsBytes = diff
+			s += fmt.Sprintf("new biggest JSONs size: %d\n", diff)
+		}
+		if ctx.MaxJSONsBytes > 0 {
+			if diff+gAllJSONsBytes > ctx.MaxJSONsBytes {
+				s += fmt.Sprintf("currently processing JSONs %dM and a new one %dM exceed limit %dM, blocking\n", gAllJSONsBytes>>20, diff>>20, ctx.MaxJSONsBytes>>20)
+				lock = true
+			}
+			gAllJSONsBytes += diff
+		}
+	} else {
+		if ctx.MaxJSONsBytes > 0 {
+			if gAllJSONsBytes+diff <= ctx.MaxJSONsBytes {
+				s += fmt.Sprintf("processed JSON %dM frees enough memory from %dM to unblock limit %dM\n", mdiff>>20, gAllJSONsBytes>>20, ctx.MaxJSONsBytes>>20)
+				unlock = true
+			}
+			gAllJSONsBytes += diff
+		}
+	}
+	if gJSONsBytesMtx != nil {
+		gJSONsBytesMtx.Unlock()
+	}
+	if s != "" {
+		lib.Printf("%s", s)
+	}
+	if gJSONsLockMtx != nil {
+		if unlock {
+			gJSONsLockMtx.Unlock()
+		}
+		if lock {
+			gJSONsLockMtx.Lock()
+		}
+	}
 }
 
 func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) (changed bool) {
@@ -4378,6 +4439,8 @@ func handleMT(ctx *lib.Ctx) {
 		gIdentityMtx = &sync.Mutex{}
 		gUploadDBMtx = &sync.Mutex{}
 		gGitHubReposMtx = &sync.RWMutex{}
+		gJSONsBytesMtx = &sync.Mutex{}
+		gJSONsLockMtx = &sync.Mutex{}
 		dads.SetMT()
 	}
 }

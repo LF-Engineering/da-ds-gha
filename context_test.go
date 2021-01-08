@@ -31,6 +31,7 @@ func copyContext(in *lib.Ctx) *lib.Ctx {
 		NoGHAMap:        in.NoGHAMap,
 		NoGHARepoDates:  in.NoGHARepoDates,
 		MaxParallelSHAs: in.MaxParallelSHAs,
+		MaxJSONsBytes:   in.MaxJSONsBytes,
 		ConfigFile:      in.ConfigFile,
 		TestMode:        in.TestMode,
 	}
@@ -63,6 +64,13 @@ func dynamicSetFields(t *testing.T, ctx *lib.Ctx, fields map[string]interface{})
 		case int:
 			// Check if types match
 			if fieldKind != reflect.Int {
+				t.Errorf("trying to set value %v, type %T for field \"%s\", type %v", interfaceValue, interfaceValue, fieldName, fieldKind)
+				return ctx
+			}
+			field.SetInt(int64(interfaceValue))
+		case int64:
+			// Check if types match
+			if fieldKind != reflect.Int64 {
 				t.Errorf("trying to set value %v, type %T for field \"%s\", type %v", interfaceValue, interfaceValue, fieldName, fieldKind)
 				return ctx
 			}
@@ -177,6 +185,7 @@ func TestInit(t *testing.T) {
 		ESURL:           "",
 		ESBulkSize:      1000,
 		MaxParallelSHAs: 0,
+		MaxJSONsBytes:   0,
 		LoadConfig:      false,
 		SaveConfig:      false,
 		NoIncremental:   false,
@@ -330,6 +339,15 @@ func TestInit(t *testing.T) {
 				t,
 				copyContext(&defaultContext),
 				map[string]interface{}{"MaxParallelSHAs": 16},
+			),
+		},
+		{
+			"Setting max parallel SHAs",
+			map[string]string{"GHA_MAX_JSONS_BYTES": "20"},
+			dynamicSetFields(
+				t,
+				copyContext(&defaultContext),
+				map[string]interface{}{"MaxJSONsBytes": int64(20) << int64(30)},
 			),
 		},
 	}
