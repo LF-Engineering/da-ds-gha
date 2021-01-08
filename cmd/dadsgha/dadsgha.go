@@ -2836,6 +2836,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 		jsonsBytes  []byte
 		nJSONsBytes int64
 	)
+	handleJSONsBytesLimit(ctx, 0)
 	for {
 		trials++
 		if trials > 1 {
@@ -3902,6 +3903,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 		jsonsBytes  []byte
 		nJSONsBytes int64
 	)
+	handleJSONsBytesLimit(ctx, 0)
 	for {
 		trials++
 		if trials > 1 {
@@ -3983,6 +3985,32 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 
 func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
 	if diff == 0 {
+		// Check status mode
+		waits := 0
+		for {
+			if gJSONsL2Mtx != nil {
+				gJSONsL2Mtx.Lock()
+			}
+			locked := gJSONsLocked
+			if gJSONsL2Mtx != nil {
+				gJSONsL2Mtx.Unlock()
+			}
+			if !locked {
+				break
+			}
+			waits++
+			if gJSONsBytesMtx != nil {
+				gJSONsBytesMtx.Lock()
+			}
+			lib.Printf("JSONs uncompressing locked, current size %dM exceed %dM (biggest one seen was/is %dM), sleeping...\n", gAllJSONsBytes>>20, ctx.MaxJSONsBytes>>20, gMaxJSONsBytes>>20)
+			if gJSONsBytesMtx != nil {
+				gJSONsBytesMtx.Unlock()
+			}
+			time.Sleep(time.Duration(2) * time.Second)
+		}
+		if waits > 0 {
+			lib.Printf("JSONs unlocked, current size %dM below %dM, waited %d times\n", gAllJSONsBytes>>20, ctx.MaxJSONsBytes>>20, waits)
+		}
 		return
 	}
 	s := ""
