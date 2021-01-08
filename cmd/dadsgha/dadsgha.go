@@ -4654,11 +4654,9 @@ func main() {
 		startDates = getStartDates(&ctx, config)
 	}
 	incremental := handleIncremental(&ctx, config, allRepos, startDates)
-	// FIXME: maybe it is worth to process this always?
-	if 1 == 1 {
-		// if !incremental {
-		handleGHAMap(&ctx)
-	}
+	// if !incremental {
+	handleGHAMap(&ctx)
+	// }
 	gha(&ctx, incremental, config, allRepos, startDates)
 	dtEnd := time.Now()
 	cacheStats()
