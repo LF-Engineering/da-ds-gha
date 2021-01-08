@@ -4527,7 +4527,7 @@ func memGCHeartBeat(ctx *lib.Ctx) {
 		time.Sleep(time.Duration(15) * time.Second)
 		runtime.GC()
 		runtime.ReadMemStats(&m)
-		if if ctx.MemHeartBeatBytes && int64(m.Alloc) > ctx.MemHeartBeatBytes {
+		if ctx.MemHeartBeatBytes > 0 && int64(m.Alloc) > ctx.MemHeartBeatBytes {
 			lib.Printf("WARNING: mem alloc heartbeat, exceeded limit %dM: %dM\n", ctx.MemHeartBeatBytes>>20, m.Alloc>>20)
 		}
 	}
