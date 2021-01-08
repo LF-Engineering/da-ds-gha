@@ -4188,6 +4188,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		}
 	}
 	dFrom := dDtFrom
+	oks := 0
 	for {
 		dTo := lib.PrevHourStart(lib.NextNDaysStart(dFrom, cNDaysGHAPeriod))
 		if dTo.After(dDtTo) {
@@ -4212,6 +4213,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 					if data.ok {
 						gGHAMap[data.key] = data.repos
 						maybeGC()
+						oks++
 					}
 				}
 			}
@@ -4221,6 +4223,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				if data.ok {
 					gGHAMap[data.key] = data.repos
 					maybeGC()
+					oks++
 				}
 			}
 		} else {
@@ -4229,6 +4232,7 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 				if data.ok {
 					gGHAMap[data.key] = data.repos
 					maybeGC()
+					oks++
 				}
 				dt = dt.Add(time.Hour)
 			}
@@ -4239,7 +4243,9 @@ func generateGHAMap(ctx *lib.Ctx, from *time.Time, save, detect, untilNow bool) 
 		if save {
 			saveGHAMap(ctx, dFrom)
 		}
-		updateGHARepoDates(ctx)
+		if oks > 0 {
+			updateGHARepoDates(ctx)
+		}
 		dFrom = lib.NextNDaysStart(dFrom, cNDaysGHAPeriod)
 		if !dFrom.Before(dDtTo) {
 			break
