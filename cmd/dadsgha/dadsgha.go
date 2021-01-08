@@ -4079,7 +4079,10 @@ func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
 	}
 	if s != "" {
 		s = strings.Join(strings.Split(s, "\n"), ", ")
-		lib.Printf("%s", s)
+		if strings.HasSuffix(s, ", ") {
+			s = s[:len(s)-2]
+		}
+		lib.Printf("%s\n", s)
 	}
 }
 
