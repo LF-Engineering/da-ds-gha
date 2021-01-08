@@ -4257,7 +4257,8 @@ func loadGHAMap(ctx *lib.Ctx, dt time.Time) {
 		return
 	}
 	gGHAMap = nil
-	sdt := lib.ToPeriodDate(dt, cNDaysGHAPeriod)
+	fdt := lib.NDaysStart(dt, cNDaysGHAPeriod)
+	sdt := lib.ToPeriodDate(fdt, cNDaysGHAPeriod)
 	path := "gha_map/" + sdt + ".json"
 	lib.Printf("loading GHA map %s\n", path)
 	bts, err := ioutil.ReadFile(path)
@@ -4284,7 +4285,8 @@ func saveGHAMap(ctx *lib.Ctx, dt time.Time) {
 		return
 	}
 	defer func() { runGC() }()
-	sdt := lib.ToPeriodDate(dt, cNDaysGHAPeriod)
+	fdt := lib.NDaysStart(dt, cNDaysGHAPeriod)
+	sdt := lib.ToPeriodDate(fdt, cNDaysGHAPeriod)
 	path := "gha_map/" + sdt + ".json"
 	runGC()
 	bts, err := jsoniter.Marshal(gGHAMap)
@@ -4652,7 +4654,9 @@ func main() {
 		startDates = getStartDates(&ctx, config)
 	}
 	incremental := handleIncremental(&ctx, config, allRepos, startDates)
-	if !incremental {
+	// FIXME: maybe it is worth to process this always?
+	if 1 == 1 {
+		// if !incremental {
 		handleGHAMap(&ctx)
 	}
 	gha(&ctx, incremental, config, allRepos, startDates)
