@@ -2843,6 +2843,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			fmt.Fprintf(os.Stderr, "%v: Error http.Get:\n%v\n", dt, err)
 		}
 		lib.FatalOnError(err)
+		httpClient = nil
 
 		// Decompress Gzipped response
 		reader, err := gzip.NewReader(response.Body)
@@ -2863,6 +2864,8 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 		jsonsBytes, err = ioutil.ReadAll(reader)
 		_ = reader.Close()
 		_ = response.Body.Close()
+		reader = nil
+		response = nil
 		// lib.FatalOnError(err)
 		if err != nil {
 			lib.Printf("%v: Error (no data yet, ioutil readall):\n%v\n", dt, err)
@@ -2875,9 +2878,9 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			return
 		}
 		if trials > 1 {
-			lib.Printf("Recovered(%d) & decompressed %s\n", trials, fn)
+			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, len(jsonsBytes))
 		} else {
-			lib.Printf("Decompressed %s\n", fn)
+			lib.Printf("Decompressed %s (%d bytes)\n", fn, len(jsonsBytes))
 		}
 		break
 	}
@@ -2885,6 +2888,7 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	// Split JSON array into separate JSONs
 	jsonsArray := bytes.Split(jsonsBytes, []byte("\n"))
 	lib.Printf("Split %s, %d JSONs\n", fn, len(jsonsArray))
+	jsonsBytes = nil
 
 	// Process JSONs one by one
 	n, f, r := 0, 0, 0
@@ -3899,6 +3903,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 			fmt.Fprintf(os.Stderr, "%v: Error http.Get:\n%v\n", dt, err)
 		}
 		lib.FatalOnError(err)
+		httpClient = nil
 
 		// Decompress Gzipped response
 		reader, err := gzip.NewReader(response.Body)
@@ -3919,6 +3924,8 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 		jsonsBytes, err = ioutil.ReadAll(reader)
 		_ = reader.Close()
 		_ = response.Body.Close()
+		reader = nil
+		response = nil
 		// lib.FatalOnError(err)
 		if err != nil {
 			lib.Printf("%v: Error (no data yet, ioutil readall):\n%v\n", dt, err)
@@ -3931,9 +3938,9 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 			return
 		}
 		if trials > 1 {
-			lib.Printf("Recovered(%d) & decompressed %s\n", trials, fn)
+			lib.Printf("Recovered(%d) & decompressed %s (%d bytes)\n", trials, fn, len(jsonsBytes))
 		} else {
-			lib.Printf("Decompressed %s\n", fn)
+			lib.Printf("Decompressed %s (%d bytes)\n", fn, len(jsonsBytes))
 		}
 		break
 	}
@@ -3941,6 +3948,7 @@ func previewGHAJSONs(ch chan ghaMapItem, ctx *lib.Ctx, dt time.Time) (item ghaMa
 	// Split JSON array into separate JSONs
 	jsonsArray := bytes.Split(jsonsBytes, []byte("\n"))
 	lib.Printf("Split %s, %d JSONs\n", fn, len(jsonsArray))
+	jsonsBytes = nil
 
 	// Process JSONs one by one
 	n := 0
@@ -4077,7 +4085,7 @@ func loadGHAMap(ctx *lib.Ctx, dt time.Time) {
 		lib.Printf("cannot unmarshal from GHA map file %s, %d bytes\n", path, len(bts))
 		return
 	}
-	lib.Printf("loaded GHA map %d items\n", len(gGHAMap))
+	lib.Printf("loaded GHA map %s %d items\n", path, len(gGHAMap))
 	return
 }
 
@@ -4162,7 +4170,7 @@ func loadGHARepoDates(ctx *lib.Ctx, sha2 string) (ghaRepoDates map[string]map[st
 	for _, repos := range ghaRepoDates {
 		nRepos += len(repos)
 	}
-	lib.Printf("loaded GHA map repo dates %d orgs, %d repos\n", len(ghaRepoDates), nRepos)
+	lib.Printf("loaded GHA map repo dates %s %d orgs, %d repos\n", path, len(ghaRepoDates), nRepos)
 	return
 }
 
