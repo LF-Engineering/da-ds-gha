@@ -76,6 +76,7 @@ var (
 	gJSONsBytesMtx      *sync.Mutex
 	gJSONsLockMtx       *sync.Mutex
 	gJSONsL2Mtx         *sync.Mutex
+	gSyncAllDatesMtx    *sync.Mutex
 	gJSONsLocked        bool
 	gAllJSONsBytes      int64
 	gMaxJSONsBytes      int64
@@ -90,6 +91,7 @@ var (
 	gUploadedIdentities = map[[3]string]struct{}{}
 	gGitHubDS           = &dads.DSStub{DS: "github"}
 	gSyncDates          = map[string]map[string]time.Time{}
+	gSyncAllDates       = map[string]map[string]time.Time{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -2576,6 +2578,42 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	return
 }
 
+func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaSuffMap map[string]string) {
+	repo := origin
+	if strings.HasSuffix(repo, ".git") {
+		repo = repo[:len(repo)-4]
+	}
+	types := []string{"pull_request", "issue", "repository"}
+	indices := []string{}
+	for _, typ := range types {
+		suff, ok := ghaSuffMap["repository"]
+		if ok {
+			indices = append(indices, cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff)
+		}
+	}
+	now := time.Now()
+	if gSyncAllDatesMtx != nil {
+		gSyncAllDatesMtx.Lock()
+	}
+	for _, index := range indices {
+		_, ok := gSyncAllDates[index]
+		if !ok {
+			gSyncAllDates[index] = map[string]time.Time{}
+		}
+		dt, ok := gSyncAllDates[index][repo]
+		if !ok {
+			gSyncAllDates[index][repo] = now
+			continue
+		}
+		if now.After(dt) {
+			gSyncAllDates[index][repo] = now
+		}
+	}
+	if gSyncAllDatesMtx != nil {
+		gSyncAllDatesMtx.Unlock()
+	}
+}
+
 func enrichData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[string]map[string]time.Time) (processed int) {
 	//  https://docs.github.com/en/free-pro-team@latest/developers/webhooks-and-events/github-event-types
 	//  Possible event types:
@@ -2612,6 +2650,7 @@ func enrichData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[strin
 			processed++
 		}
 	}
+	markSyncEvent(ctx, origin, ev.GHAFxSlug, ev.GHASuffMap)
 	return
 }
 
@@ -2626,6 +2665,7 @@ func enrichDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates map
 	if enrichRepoDataOld(ctx, ev, origin, startDates) {
 		processed++
 	}
+	markSyncEvent(ctx, origin, ev.GHAFxSlug, ev.GHASuffMap)
 	return
 }
 
@@ -3227,6 +3267,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 		uploadIdentities(ctx, &gDadsCtx, false)
 		uploadRichItems(ctx, false)
 		updateStartDates(startDates, gSyncDates)
+		addStartDates(startDates, gSyncAllDates)
 		lib.FatalOnError(saveConfigStartDates(ctx, startDates))
 	}()
 
@@ -3495,6 +3536,29 @@ func updateStartDates(startDates, update map[string]map[string]time.Time) {
 		}
 	}
 	lib.Printf("updated %d sync dates, added %d\n", u, n)
+}
+
+func addStartDates(startDates, add map[string]map[string]time.Time) {
+	a := 0
+	for idx, data := range add {
+		_, ok := startDates[idx]
+		if !ok {
+			startDates[idx] = map[string]time.Time{}
+			for origin, dt := range data {
+				startDates[idx][origin] = dt
+				a++
+			}
+		} else {
+			for origin, dt := range data {
+				_, ok := startDates[idx][origin]
+				if !ok {
+					startDates[idx][origin] = dt
+					a++
+				}
+			}
+		}
+	}
+	lib.Printf("added %d sync dates\n", a)
 }
 
 func getStartDates(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (startDates map[string]map[string]time.Time) {
@@ -4504,6 +4568,7 @@ func handleMT(ctx *lib.Ctx) {
 		gJSONsBytesMtx = &sync.Mutex{}
 		gJSONsLockMtx = &sync.Mutex{}
 		gJSONsL2Mtx = &sync.Mutex{}
+		gSyncAllDatesMtx = &sync.Mutex{}
 		dads.SetMT()
 	}
 }
