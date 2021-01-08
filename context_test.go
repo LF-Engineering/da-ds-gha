@@ -343,7 +343,7 @@ func TestInit(t *testing.T) {
 		},
 		{
 			"Setting max parallel SHAs",
-			map[string]string{"GHA_MAX_JSONS_BYTES": "20"},
+			map[string]string{"GHA_MAX_JSONS_GBYTES": "20"},
 			dynamicSetFields(
 				t,
 				copyContext(&defaultContext),

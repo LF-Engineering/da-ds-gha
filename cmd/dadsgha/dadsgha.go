@@ -4026,7 +4026,10 @@ func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
 			s += fmt.Sprintf("new biggest JSONs size: %d\n", diff)
 		}
 		if ctx.MaxJSONsBytes > 0 {
-			if diff+gAllJSONsBytes > ctx.MaxJSONsBytes {
+			if gAllJSONsBytes > ctx.MaxJSONsBytes {
+				s += fmt.Sprintf("processing JSONs %dM even without a new one %dM exceed limit %dM, blocking\n", gAllJSONsBytes>>20, diff>>20, ctx.MaxJSONsBytes>>20)
+				lock = true
+			} else if diff+gAllJSONsBytes > ctx.MaxJSONsBytes {
 				s += fmt.Sprintf("currently processing JSONs %dM and a new one %dM exceed limit %dM, blocking\n", gAllJSONsBytes>>20, diff>>20, ctx.MaxJSONsBytes>>20)
 				lock = true
 			}
@@ -4035,7 +4038,9 @@ func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
 	} else {
 		if ctx.MaxJSONsBytes > 0 {
 			if gAllJSONsBytes+diff <= ctx.MaxJSONsBytes {
-				s += fmt.Sprintf("processed JSON %dM frees enough memory from %dM to unblock limit %dM\n", mdiff>>20, gAllJSONsBytes>>20, ctx.MaxJSONsBytes>>20)
+				if gAllJSONsBytes > ctx.MaxJSONsBytes {
+					s += fmt.Sprintf("processed JSON %dM frees enough memory from %dM to unblock limit %dM\n", mdiff>>20, gAllJSONsBytes>>20, ctx.MaxJSONsBytes>>20)
+				}
 				unlock = true
 			}
 			gAllJSONsBytes += diff
@@ -4073,6 +4078,7 @@ func handleJSONsBytesLimit(ctx *lib.Ctx, diff int64) {
 		}
 	}
 	if s != "" {
+		s = strings.Join(strings.Split(s, "\n"), ", ")
 		lib.Printf("%s", s)
 	}
 }

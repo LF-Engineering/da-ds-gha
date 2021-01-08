@@ -30,7 +30,7 @@ cd dev-analytics-api || exit 8
 git checkout "$2" || exit 9
 cd .. || exit 10
 function cleanup {
-  rm -f "${lock_file}" dev-analytics-api
+  rm -rf "${lock_file}" dev-analytics-api
 }
 > "${lock_file}"
 trap cleanup EXIT

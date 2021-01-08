@@ -28,7 +28,7 @@ type Ctx struct {
 	ConfigFile       string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config" (gha_config_fixtures.json, gha_config_dates.json)
 	GapURL           string   // From GHA_GAP_URL, address of the GAP API
 	MaxParallelSHAs  int      // From GHA_MAX_PARALLEL_SHAS, maximum number of GHA repo dates SHA files to process in parallel, setting to 0 means unlimited (basically NCPUS)
-	MaxJSONsBytes    int64    // From GHA_MAX_JSONS_BYTES, when processing multiple GHA hours in parallel, single hour uncompressed can even be 800M, when you have say 64 CPUs then you can reserve 50+ G, so you can specify limit in Gb, default is 0 = no limit
+	MaxJSONsBytes    int64    // From GHA_MAX_JSONS_GBYTES, when processing multiple GHA hours in parallel, single hour uncompressed can even be 800M, when you have say 64 CPUs then you can reserve 50+ G, so you can specify limit in Gb, default is 0 = no limit
 	TestMode         bool     // True when running tests
 	OAuthKeys        []string // GitHub oauth keys recevide from GHA_GITHUB_OAUTH configuration (initialized only when lib.GHClient() is called)
 }
@@ -126,8 +126,8 @@ func (ctx *Ctx) Init() {
 		}
 	}
 	// Max JSONs bytes
-	if os.Getenv("GHA_MAX_JSONS_BYTES") != "" {
-		maxJSONsBytes, err := strconv.ParseInt(os.Getenv("GHA_MAX_JSONS_BYTES"), 10, 64)
+	if os.Getenv("GHA_MAX_JSONS_GBYTES") != "" {
+		maxJSONsBytes, err := strconv.ParseInt(os.Getenv("GHA_MAX_JSONS_GBYTES"), 10, 64)
 		FatalOnError(err)
 		if maxJSONsBytes > 0 {
 			ctx.MaxJSONsBytes = maxJSONsBytes << 30
