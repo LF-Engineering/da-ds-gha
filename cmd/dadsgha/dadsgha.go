@@ -3266,16 +3266,17 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	defer func() {
 		uploadIdentities(ctx, &gDadsCtx, false)
 		uploadRichItems(ctx, false)
-		updateStartDates(startDates, gSyncDates)
-		addStartDates(startDates, gSyncAllDates)
-		lib.FatalOnError(saveConfigStartDates(ctx, startDates))
+		enchanceStartdates(ctx, startDates)
 	}()
 
-	igc := 0
-	maybeGC := func() {
-		igc++
-		if igc%6 == 0 {
+	ic := 0
+	maybeGCAndEnchance := func() {
+		ic++
+		if ic%6 == 0 {
 			runGC()
+		}
+		if ic%360 == 0 {
+			enchanceStartdates(ctx, startDates)
 		}
 	}
 
@@ -3305,7 +3306,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 					dateToFunc()
 					if pdt != nil && pdt.After(maxProcessed) {
 						maxProcessed = *pdt
-						maybeGC()
+						maybeGCAndEnchance()
 					}
 				}
 			}
@@ -3315,7 +3316,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 				dateToFunc()
 				if pdt != nil && pdt.After(maxProcessed) {
 					maxProcessed = *pdt
-					maybeGC()
+					maybeGCAndEnchance()
 				}
 			}
 		} else {
@@ -3325,7 +3326,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 				dt = dt.Add(time.Hour)
 				if pdt != nil && pdt.After(maxProcessed) {
 					maxProcessed = *pdt
-					maybeGC()
+					maybeGCAndEnchance()
 				}
 			}
 		}
@@ -3346,6 +3347,12 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	} else {
 		lib.Printf("no new data was processed, not saving fixtures state\n")
 	}
+}
+
+func enchanceStartdates(ctx *lib.Ctx, startDates map[string]map[string]time.Time) {
+	updateStartDates(startDates, gSyncDates)
+	addStartDates(startDates, gSyncAllDates)
+	lib.FatalOnError(saveConfigStartDates(ctx, startDates))
 }
 
 func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.Time) {
