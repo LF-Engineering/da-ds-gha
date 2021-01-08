@@ -3266,7 +3266,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	defer func() {
 		uploadIdentities(ctx, &gDadsCtx, false)
 		uploadRichItems(ctx, false)
-		enchanceStartdates(ctx, startDates)
+		enchanceStartDates(ctx, startDates, false)
 	}()
 
 	ic := 0
@@ -3276,7 +3276,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 			runGC()
 		}
 		if ic%360 == 0 {
-			enchanceStartdates(ctx, startDates)
+			enchanceStartDates(ctx, startDates, true)
 		}
 	}
 
@@ -3349,9 +3349,15 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	}
 }
 
-func enchanceStartdates(ctx *lib.Ctx, startDates map[string]map[string]time.Time) {
+func enchanceStartDates(ctx *lib.Ctx, startDates map[string]map[string]time.Time, withMtx bool) {
 	updateStartDates(startDates, gSyncDates)
+	if withMtx && gSyncAllDatesMtx != nil {
+		gSyncAllDatesMtx.Lock()
+	}
 	addStartDates(startDates, gSyncAllDates)
+	if withMtx && gSyncAllDatesMtx != nil {
+		gSyncAllDatesMtx.Unlock()
+	}
 	lib.FatalOnError(saveConfigStartDates(ctx, startDates))
 }
 
