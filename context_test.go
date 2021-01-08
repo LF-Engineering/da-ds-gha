@@ -193,7 +193,7 @@ func TestInit(t *testing.T) {
 		NoIncremental:     false,
 		NoGHAMap:          false,
 		NoGHARepoDates:    false,
-		ConfigFile:        "gha_config",
+		ConfigFile:        "gha_config/",
 		TestMode:          true,
 	}
 

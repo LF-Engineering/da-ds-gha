@@ -25,7 +25,7 @@ type Ctx struct {
 	NoIncremental     bool     // From GHA_NO_INCREMENTAL, if set - it will not attempt to detect fixture changes since last run and will treat all fixtures as new and detect the start date everywhere
 	NoGHAMap          bool     // From GHA_NO_GHA_MAP, if set - it will not use any GHA map files (which are very memory consuming)
 	NoGHARepoDates    bool     // From GHA_NO_GHA_REPO_DATES, if set, it will skip GHA repo dates processing (file is huge, requires around 30G of memory), GHA map files can still be processed
-	ConfigFile        string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config" (gha_config_fixtures.json, gha_config_dates.json)
+	ConfigFile        string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config/" (gha_config/fixtures.json, gha_config/dates.json, gha_config/repos.json)
 	GapURL            string   // From GHA_GAP_URL, address of the GAP API
 	MaxParallelSHAs   int      // From GHA_MAX_PARALLEL_SHAS, maximum number of GHA repo dates SHA files to process in parallel, setting to 0 means unlimited (basically NCPUS)
 	MaxJSONsBytes     int64    // From GHA_MAX_JSONS_GBYTES, when processing multiple GHA hours in parallel, single hour uncompressed can even be 800M, when you have say 64 CPUs then you can reserve 50+ G, so you can specify limit in Gb, default is 0 = no limit
@@ -90,7 +90,7 @@ func (ctx *Ctx) Init() {
 	ctx.SaveConfig = os.Getenv("GHA_SAVE_CONFIG") != ""
 	ctx.ConfigFile = os.Getenv("GHA_CONFIG_FILE")
 	if ctx.ConfigFile == "" {
-		ctx.ConfigFile = "gha_config"
+		ctx.ConfigFile = "gha_config/"
 	}
 
 	// No incremental mode
