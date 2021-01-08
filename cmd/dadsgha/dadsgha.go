@@ -2917,13 +2917,21 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	types := []string{"pull_request", "issue", "repository"}
 	reAll, _ := config[[2]string{"", ""}]
 	rdts := make(map[string]time.Time)
+	var rdtsMtx *sync.Mutex
+	if gThrN > 1 {
+		rdtsMtx = &sync.Mutex{}
+	}
 	lib.Printf("generating repo - start date mapping.\n")
-	for i := 0; i < 0x100; i++ {
-		currSHA := fmt.Sprintf("%02x", i)
+	processSHA := func(ch chan struct{}, currSHA string) {
+		defer func() {
+			if ch != nil {
+				ch <- struct{}{}
+			}
+		}()
 		ghaRepoDates := loadGHARepoDates(ctx, currSHA)
 		if ghaRepoDates == nil {
 			lib.Printf("No GHA repo dates file for SHA %s, skipping\n", currSHA)
-			continue
+			return
 		}
 		for org, orgRepos := range ghaRepoDates {
 			for r, rdt := range orgRepos {
@@ -2937,7 +2945,13 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 					continue
 				}
 				dt := time.Unix(int64(rdt)*int64(3600), 0)
+				if rdtsMtx != nil {
+					rdtsMtx.Lock()
+				}
 				rdts[repo] = dt
+				if rdtsMtx != nil {
+					rdtsMtx.Unlock()
+				}
 				if ctx.Debug > 0 {
 					lib.Printf("added %s with %s start date\n", repo, lib.ToGHADate2(dt))
 				}
@@ -2945,6 +2959,28 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 		}
 		ghaRepoDates = nil
 		runGC()
+	}
+	if gThrN > 1 {
+		nThreads := 0
+		ch := make(chan struct{})
+		for i := 0; i < 0x100; i++ {
+			cSHA := fmt.Sprintf("%02x", i)
+			go processSHA(ch, cSHA)
+			nThreads++
+			if nThreads == gThrN {
+				<-ch
+				nThreads--
+			}
+		}
+		for nThreads > 0 {
+			<-ch
+			nThreads--
+		}
+	} else {
+		for i := 0; i < 0x100; i++ {
+			cSHA := fmt.Sprintf("%02x", i)
+			processSHA(nil, cSHA)
+		}
 	}
 	lib.Printf("generated repo - start date mapping with %d hits\n", len(rdts))
 	runGC()
@@ -4173,9 +4209,17 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 		return
 	}
 	defer func() { runGC() }()
+	var mtx *sync.Mutex
+	if gThrN > 1 {
+		mtx = &sync.Mutex{}
+	}
 	changedItems, updatedSHAs := 0, 0
-	for i := 0; i < 0x100; i++ {
-		currSHA := fmt.Sprintf("%02x", i)
+	processSHA := func(ch chan struct{}, currSHA string) {
+		defer func() {
+			if ch != nil {
+				ch <- struct{}{}
+			}
+		}()
 		ghaRepoDates := loadGHARepoDates(ctx, currSHA)
 		changed := false
 		if ghaRepoDates == nil {
@@ -4211,7 +4255,13 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 					ghaRepoDates[org] = make(map[string]int)
 					ghaRepoDates[org][repo] = idt
 					changed = true
+					if mtx != nil {
+						mtx.Lock()
+					}
 					changedItems++
+					if mtx != nil {
+						mtx.Unlock()
+					}
 					continue
 				}
 				ridt, ok := orgRepos[repo]
@@ -4219,21 +4269,61 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 					if idt < ridt {
 						ghaRepoDates[org][repo] = idt
 						changed = true
+						if mtx != nil {
+							mtx.Lock()
+						}
 						changedItems++
+						if mtx != nil {
+							mtx.Unlock()
+						}
 					}
 					continue
 				}
 				ghaRepoDates[org][repo] = idt
 				changed = true
+				if mtx != nil {
+					mtx.Lock()
+				}
 				changedItems++
+				if mtx != nil {
+					mtx.Unlock()
+				}
 			}
 		}
 		if changed {
 			saveGHARepoDates(ctx, currSHA, ghaRepoDates)
+			if mtx != nil {
+				mtx.Lock()
+			}
 			updatedSHAs++
+			if mtx != nil {
+				mtx.Unlock()
+			}
 		}
 		ghaRepoDates = nil
 		runGC()
+	}
+	if gThrN > 1 {
+		nThreads := 0
+		ch := make(chan struct{})
+		for i := 0; i < 0x100; i++ {
+			cSHA := fmt.Sprintf("%02x", i)
+			go processSHA(ch, cSHA)
+			nThreads++
+			if nThreads == gThrN {
+				<-ch
+				nThreads--
+			}
+		}
+		for nThreads > 0 {
+			<-ch
+			nThreads--
+		}
+	} else {
+		for i := 0; i < 0x100; i++ {
+			cSHA := fmt.Sprintf("%02x", i)
+			processSHA(nil, cSHA)
+		}
 	}
 	lib.Printf("Updated SHAs: %d, items: %d\n", updatedSHAs, changedItems)
 }
