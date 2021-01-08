@@ -4377,13 +4377,27 @@ func handleMT(ctx *lib.Ctx) {
 func getMemUsage() string {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	return fmt.Sprintf("alloc:%dM heap-alloc:%dM(%dk objs) total:%dM sys:%dM #gc:%d", m.Alloc>>20, m.HeapAlloc>>20, m.HeapObjects>>10, m.TotalAlloc>>20, m.Sys>>20, m.NumGC)
+	//return fmt.Sprintf("alloc:%dM heap-alloc:%dM(%dk objs) total:%dM sys:%dM #gc:%d", m.Alloc>>20, m.HeapAlloc>>20, m.HeapObjects>>10, m.TotalAlloc>>20, m.Sys>>20, m.NumGC)
+	return fmt.Sprintf("alloc:%dM #gc:%d", m.Alloc>>20, m.NumGC)
 }
 
 func runGC() {
-	lib.Printf(getMemUsage() + "\n")
+	//lib.Printf(getMemUsage() + "\n")
 	runtime.GC()
 	lib.Printf(getMemUsage() + "\n")
+}
+
+func memGCHeartBeat() {
+	var m runtime.MemStats
+	for {
+		time.Sleep(time.Duration(30) * time.Second)
+		runtime.GC()
+		runtime.ReadMemStats(&m)
+		mbAlloc := m.Alloc >> 20
+		if mbAlloc > 10240 {
+			lib.Printf("mem alloc heartbeat: %dM\n", mbAlloc)
+		}
+	}
 }
 
 func initDadsCtx(ctx *lib.Ctx) {
@@ -4428,6 +4442,7 @@ func main() {
 		allRepos   []string
 		startDates map[string]map[string]time.Time
 	)
+	go memGCHeartBeat()
 	if ctx.LoadConfig {
 		var err error
 		config, allRepos, err = loadConfigFixtures(&ctx)

@@ -10,28 +10,28 @@ then
   echo "$0: you need to specify environment as a 2nd arg: test|prod"
   exit 2
 fi
-cd /root/go/src/github.com/LF-Engineering/da-ds-gha/ || exit 3
-git pull || exit 4
+lock_file="/tmp/$1.lock"
+if [ -f "${lock_file}" ]
+then
+  echo "$0: another da-ds-gha \"$2\" instance \"$1\" is still running, exiting"
+  exit 3
+fi
+cd /root/go/src/github.com/LF-Engineering/da-ds-gha/ || exit 4
+git pull || exit 5
 repo="`cat repo_access.secret`"
 if [ -z "$repo" ]
 then
   echo "$0: missing repo_access.secret file"
-  exit 5
+  exit 6
 fi
 rm -rf dev-analytics-api
-git clone "${repo}" || exit 6
-cd dev-analytics-api || exit 7
-git checkout "$2" || exit 8
-cd .. || exit 9
-lock_file="/tmp/$1.lock"
+git clone "${repo}" || exit 7
+cd dev-analytics-api || exit 8
+git checkout "$2" || exit 9
+cd .. || exit 10
 function cleanup {
   rm -f "${lock_file}" dev-analytics-api
 }
-if [ -f "${lock_file}" ]
-then
-  echo "$0: another da-ds-gha \"$2\" instance \"$1\" is still running, exiting"
-  exit 10
-fi
 > "${lock_file}"
 trap cleanup EXIT
 #./dadsgha ./dev-analytics-api/app/services/lf/bootstrap/fixtures 2>&1 | tee -a run.log

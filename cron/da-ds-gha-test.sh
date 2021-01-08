@@ -1,6 +1,6 @@
 #/bin/bash
 cd /root/go/src/github.com/LF-Engineering/da-ds-gha/ || exit 1
-export GHA_NCPUS=''
+export GHA_NCPUS=16
 export GHA_NO_GHA_MAP=''
 export GHA_DB_BULK_SIZE=''
 export GHA_ES_BULK_SIZE=''
