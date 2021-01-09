@@ -48,8 +48,8 @@ type ghaMapItem struct {
 
 const (
 	// FIXME
-	// cPrefix = "gha-"
-	cPrefix = "sds-"
+	cPrefix = "gha-"
+	// cPrefix = "sds-"
 	// cMaxGitHubUsersFileCacheAge 90 days (in seconds) - file is considered too old anywhere between 90-180 days
 	cMaxGitHubUsersFileCacheAge = 7776000
 	// cNDaysGHAPeriod - how many days cache in GHA map files at once
@@ -965,6 +965,7 @@ func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 		index, _ := item["index"].(string)
 		origin, _ := item["github_repo"].(string)
 		enriched, _ := item["metadata__enriched_on"].(time.Time)
+		enriched = lib.HourStart(enriched)
 		_, ok := gSyncDates[index]
 		if !ok {
 			gSyncDates[index] = map[string]time.Time{}
@@ -1553,11 +1554,11 @@ func addIdentity(ctx *lib.Ctx, identity [3]string) {
 	var pctx *dads.Ctx
 	if gIdentityMtx != nil {
 		gIdentityMtx.Lock()
-		pctx = &gDadsCtx
 		defer func() {
 			gIdentityMtx.Unlock()
 		}()
 	}
+	pctx = &gDadsCtx
 	_, ok := gUploadedIdentities[identity]
 	if ok {
 		return
@@ -1580,16 +1581,25 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 		found     bool
 	)
 	if origin != ev.Repo.Name {
+		if ctx.Debug > 1 {
+			lib.Printf("getForksStarsCountAPI: origin mismatch %s != %s\n", origin, ev.Repo.Name)
+		}
 		return
 	}
 	ary := strings.Split(origin, "/")
 	if len(ary) != 2 {
+		if ctx.Debug > 1 {
+			lib.Printf("getForksStarsCountAPI: incorrect origin %s\n", origin)
+		}
 		return
 	}
 	org := ary[0]
 	repoName := ary[1]
 	setResults := func() {
 		if repo == nil || err != nil {
+			if ctx.Debug > 1 {
+				lib.Printf("getForksStarsCountAPI: setResults failed (%v,%v)\n", repo, err)
+			}
 			return
 		}
 		ok = true
@@ -1613,7 +1623,7 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 		gGitHubReposMtx.RUnlock()
 	}
 	if found {
-		age := repo["at"].(time.Time).Sub(time.Now())
+		age := time.Now().Sub(repo["at"].(time.Time))
 		if ctx.Debug > 0 {
 			lib.Printf("getForksStarsCountAPI(%d): cache hit: %s (age %v)\n", cacheSize, origin, age)
 		}
@@ -1681,6 +1691,9 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 			if gGitHubReposMtx != nil {
 				gGitHubReposMtx.Unlock()
 			}
+			if ctx.Debug > 1 {
+				lib.Printf("getForksStarsCountAPI: repo not found %s: %v\n", origin, err)
+			}
 			return
 		}
 		if e != nil && !retry {
@@ -1728,6 +1741,10 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 				"fork":        fork,
 				"at":          time.Now(),
 			}
+			if ctx.Debug > 1 {
+				lib.Printf("getForksStarsCountAPI: found repo: %s: %v\n", origin, repo)
+			}
+			setResults()
 		}
 		break
 	}
@@ -1741,16 +1758,22 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 	return
 }
 
-func getForksStarsCount(ev *lib.Event, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
+func getForksStarsCount(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
 	if ev.Payload.PullRequest == nil {
 		return
 	}
 	pr := *ev.Payload.PullRequest
 	if pr.Base.Repo == nil {
+		if ctx.Debug > 1 {
+			lib.Printf("no pr.base.repo specified in the event type %s\n", ev.Type)
+		}
 		return
 	}
 	repo := *pr.Base.Repo
 	if origin != repo.FullName {
+		if ctx.Debug > 1 {
+			lib.Printf("no pr.base.repo.fullname %s not matching origin %s the event type %s\n", repo.FullName, origin, ev.Type)
+		}
 		return
 	}
 	forks = repo.Forks
@@ -1762,7 +1785,7 @@ func getForksStarsCount(ev *lib.Event, origin string) (forks, stars, size, openI
 	return
 }
 
-func getForksStarsCountOld(ev *lib.EventOld, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
+func getForksStarsCountOld(ctx *lib.Ctx, ev *lib.EventOld, origin string) (forks, stars, size, openIssues int, fork, ok bool) {
 	repo := ev.Repository
 	repoName := ""
 	if repo.Organization == nil || *repo.Organization == "" {
@@ -1771,6 +1794,9 @@ func getForksStarsCountOld(ev *lib.EventOld, origin string) (forks, stars, size,
 		repoName = *repo.Organization + "/" + repo.Name
 	}
 	if repoName != origin {
+		if ctx.Debug > 1 {
+			lib.Printf("get forks old: origin mismatch %s != %s\n", repoName, origin)
+		}
 		return
 	}
 	forks = repo.Forks
@@ -1805,7 +1831,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	if ok {
 		startDate, ok = indexStartDates[origin]
 	}
-	if ok && !startDate.Before(ev.CreatedAt) {
+	hourCreated := lib.HourStart(ev.CreatedAt)
+	if ok && !startDate.Before(hourCreated) {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
@@ -2100,7 +2127,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	if ok {
 		startDate, ok = indexStartDates[origin]
 	}
-	if ok && !startDate.Before(ev.CreatedAt) {
+	hourCreated := lib.HourStart(ev.CreatedAt)
+	if ok && !startDate.Before(hourCreated) {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
@@ -2438,7 +2466,8 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 	if ok {
 		startDate, ok = indexStartDates[origin]
 	}
-	if ok && !startDate.Before(ev.CreatedAt) {
+	hourCreated := lib.HourStart(ev.CreatedAt)
+	if ok && !startDate.Before(hourCreated) {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
@@ -2460,11 +2489,11 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 			return
 		}
 	} else {
-		forksCount, starsCount, size, openIssues, fork, ok = getForksStarsCount(ev, origin)
+		forksCount, starsCount, size, openIssues, fork, ok = getForksStarsCount(ctx, ev, origin)
 	}
 	if !ok {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %s: cannot get forks/stargazers info, skipping\n", origin, ev.Type)
+			lib.Printf("%s: %s: cannot get forks/stargazers info, skipping, forkEvent: %v\n", origin, ev.Type, forkEvent)
 		}
 		return
 	}
@@ -2529,13 +2558,14 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	if ok {
 		startDate, ok = indexStartDates[origin]
 	}
-	if ok && !startDate.Before(ev.CreatedAt) {
+	hourCreated := lib.HourStart(ev.CreatedAt)
+	if ok && !startDate.Before(hourCreated) {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
 		}
 		return
 	}
-	forksCount, starsCount, size, openIssues, fork, ok := getForksStarsCountOld(ev, origin)
+	forksCount, starsCount, size, openIssues, fork, ok := getForksStarsCountOld(ctx, ev, origin)
 	if !ok {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: %s: cannot get forks/stargazers info (old format), skipping\n", origin, ev.Type)
@@ -2603,7 +2633,7 @@ func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaSuffMap map[string]str
 			indices = append(indices, cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff)
 		}
 	}
-	now := time.Now()
+	prevHour := lib.PrevHourStart(time.Now())
 	if gSyncAllDatesMtx != nil {
 		gSyncAllDatesMtx.Lock()
 	}
@@ -2614,11 +2644,11 @@ func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaSuffMap map[string]str
 		}
 		dt, ok := gSyncAllDates[index][repo]
 		if !ok {
-			gSyncAllDates[index][repo] = now
+			gSyncAllDates[index][repo] = prevHour
 			continue
 		}
-		if now.After(dt) {
-			gSyncAllDates[index][repo] = now
+		if prevHour.After(dt) {
+			gSyncAllDates[index][repo] = prevHour
 		}
 	}
 	if gSyncAllDatesMtx != nil {
@@ -2796,19 +2826,24 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 	if gGHAMap != nil {
 		repos, ok = gGHAMap[ky]
 	}
-	// lib.Printf("%s -> %v(%d)\n", ky, ok, len(repos))
+	if ctx.Debug > 1 {
+		lib.Printf("repos@ghahour: %s -> %v(%d)\n", ky, ok, len(repos))
+	}
 	if ok {
 		reAll, _ := config[[2]string{"", ""}]
 		hits := false
 		for repo := range repos {
 			if repoHit(repo, reAll) {
+				if ctx.Debug > 1 {
+					lib.Printf("%s/%s hits re %v\n", ky, repo, reAll)
+				}
 				hits = true
 				break
 			}
 		}
 		if !hits {
 			if ctx.Debug > 0 {
-				lib.Printf("we don't need to process GHA %s: no hits\n", ky)
+				lib.Printf("no need to process GHA %s: no hits\n", ky)
 			}
 			return
 		}
@@ -2843,7 +2878,9 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 						}
 						gotIndices = true
 					}
-					//lib.Printf("%s check against %v\n", repo, indices)
+					if ctx.Debug > 1 {
+						lib.Printf("%s/%s check against %v (re: %v)\n", repo, ky, indices, re)
+					}
 					for _, idx := range indices {
 						originStartDates, ok := startDates[idx]
 						if !ok {
@@ -2862,12 +2899,14 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 							break
 						}
 						ghaDate := lib.HourStart(startDate)
-						if ghaDate.Before(dt) {
+						if !dt.Before(ghaDate) {
 							if ctx.Debug > 0 {
 								lib.Printf("%s repo matches %s/%s in %s, start date is %v, GHA %v must be processed\n", repo, fSlug, key[1], idx, startDate, ky)
 							}
 							needsProcessing = true
 							break
+						} else if ctx.Debug > 1 {
+							lib.Printf("%s repo matches %s/%s in %s, start date is %v - not before %v, GHA %v can be skipped\n", repo, fSlug, key[1], idx, startDate, dt, ky)
 						}
 					}
 				}
@@ -3083,7 +3122,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 				gotIndices = true
 			}
 			if ctx.Debug > 1 {
-				lib.Printf("%s check against %v\n", repo, indices)
+				lib.Printf("%s check against %v for %v\n", repo, indices, dt)
 			}
 			for _, idx := range indices {
 				originStartDates, ok := startDates[idx]
@@ -3287,9 +3326,10 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 		if ic%6 == 0 {
 			runGC()
 		}
-		if ic%360 == 0 {
-			enchanceStartDates(ctx, startDates, true)
-		}
+		// FIXME: this updates start dates to the future, so breaks enrichment - need to fix this somehow
+		//if ic%360 == 0 {
+		//	enchanceStartDates(ctx, startDates, true)
+		//}
 	}
 
 	maxProcessed := gMinGHA
