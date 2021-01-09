@@ -1839,10 +1839,9 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		startDate, ok = indexStartDates[origin]
 	}
 	hourCreated := lib.HourStart(ev.CreatedAt)
-	// if ok && !startDate.Before(hourCreated) {
 	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
+			lib.Printf("enrichIssueData: %s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
@@ -2138,7 +2137,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	hourCreated := lib.HourStart(ev.CreatedAt)
 	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
+			lib.Printf("enrichPRData: %s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
@@ -2477,7 +2476,7 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 	hourCreated := lib.HourStart(ev.CreatedAt)
 	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
+			lib.Printf("enrichRepoData(%v): %s: %v is after %v, skipping\n", forkEvent, origin, startDate, hourCreated)
 		}
 		return
 	}
@@ -2571,7 +2570,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	hourCreated := lib.HourStart(ev.CreatedAt)
 	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
+			lib.Printf("enrichRepoDataOld: %s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
