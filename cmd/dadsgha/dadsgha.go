@@ -2490,6 +2490,7 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 		err          error
 		artificialID string
 	)
+	now := time.Now()
 	if forkEvent {
 		forksCount, starsCount, subsCount, size, openIssues, fork, ok, err = getForksStarsCountAPI(ctx, ev, origin)
 		if err != nil {
@@ -2508,7 +2509,6 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 		return
 	}
 	rich := make(map[string]interface{})
-	now := time.Now()
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	if uuid == "" {
 		lib.Printf("error: enrichRepoData: failed to generate uuid for (%s,%s)\n", origin, artificialID)
