@@ -3700,7 +3700,7 @@ func getStartDates(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (startDate
 }
 
 func ensureSyncInfoIndex(ctx *lib.Ctx) (err error) {
-	idx := "ghasyncinfo"
+	idx := cPrefix + "da-ds-gha-sync-info"
 	method := "HEAD"
 	url := ctx.ESURL + "/" + idx
 	req, err := http.NewRequest(method, url, nil)
@@ -3746,7 +3746,7 @@ func ensureSyncInfoIndex(ctx *lib.Ctx) (err error) {
 }
 
 func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, allRepos []string, tm time.Time) (err error) {
-	idx := "ghasyncinfo"
+	idx := cPrefix + "da-ds-gha-sync-info"
 	method := "PUT"
 	item := map[string]interface{}{}
 	id := tm.UnixNano()
@@ -3797,7 +3797,7 @@ func saveFixturesState(ctx *lib.Ctx, serializedConfig map[string]string, allRepo
 }
 
 func loadFixturesState(ctx *lib.Ctx) (config map[string]string, allRepos []string, when time.Time, loaded bool, err error) {
-	idx := "ghasyncinfo"
+	idx := cPrefix + "da-ds-gha-sync-info"
 	method := "GET"
 	payloadBytes := []byte(`{"query":{"match_all":{}},"sort":{"id":{"order":"desc"}},"size":1}`)
 	payloadBody := bytes.NewReader(payloadBytes)
