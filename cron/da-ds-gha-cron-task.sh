@@ -18,6 +18,7 @@ then
 fi
 cd /root/go/src/github.com/LF-Engineering/da-ds-gha/ || exit 4
 git pull || exit 5
+make || exit 11
 repo="`cat repo_access.secret`"
 if [ -z "$repo" ]
 then

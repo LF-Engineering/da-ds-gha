@@ -1239,7 +1239,7 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 	gRichItems[rich["uuid"].(string)] = rich
 	nRichItems := len(gRichItems)
 	if nRichItems < ctx.ESBulkSize {
-		if ctx.Debug > 1 {
+		if ctx.Debug > 2 {
 			lib.Printf("Pending items: %d\n", nRichItems)
 		}
 		return
@@ -1832,9 +1832,10 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		startDate, ok = indexStartDates[origin]
 	}
 	hourCreated := lib.HourStart(ev.CreatedAt)
-	if ok && !startDate.Before(hourCreated) {
+	// if ok && !startDate.Before(hourCreated) {
+	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
+			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
@@ -2128,9 +2129,9 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		startDate, ok = indexStartDates[origin]
 	}
 	hourCreated := lib.HourStart(ev.CreatedAt)
-	if ok && !startDate.Before(hourCreated) {
+	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
+			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
@@ -2467,9 +2468,9 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 		startDate, ok = indexStartDates[origin]
 	}
 	hourCreated := lib.HourStart(ev.CreatedAt)
-	if ok && !startDate.Before(hourCreated) {
+	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
+			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
@@ -2559,9 +2560,9 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 		startDate, ok = indexStartDates[origin]
 	}
 	hourCreated := lib.HourStart(ev.CreatedAt)
-	if ok && !startDate.Before(hourCreated) {
+	if ok && startDate.After(hourCreated) {
 		if ctx.Debug > 0 {
-			lib.Printf("%s: %v is not before %v, skipping\n", origin, startDate, ev.CreatedAt)
+			lib.Printf("%s: %v is after %v, skipping\n", origin, startDate, hourCreated)
 		}
 		return
 	}
