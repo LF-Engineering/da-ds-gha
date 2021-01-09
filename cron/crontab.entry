@@ -1,0 +1,2 @@
+7 */2 * * * PATH=$PATH:/snap/bin:/usr/local/go/bin:$HOME/go/bin/ /usr/bin/da-ds-gha-test.sh
+7 */2 * * * PATH=$PATH:/snap/bin:/usr/local/go/bin:$HOME/go/bin/ /usr/bin/da-ds-gha-prod.sh
