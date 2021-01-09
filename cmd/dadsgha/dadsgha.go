@@ -964,8 +964,9 @@ func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	for _, item := range items {
 		index, _ := item["index"].(string)
 		origin, _ := item["github_repo"].(string)
-		enriched, _ := item["metadata__enriched_on"].(time.Time)
-		enriched = lib.HourStart(enriched)
+		//enriched, _ := item["metadata__enriched_on"].(time.Time)
+		//enriched = lib.HourStart(enriched)
+		enriched, _ := item["gha_hour"].(time.Time)
 		_, ok := gSyncDates[index]
 		if !ok {
 			gSyncDates[index] = map[string]time.Time{}
@@ -2629,7 +2630,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	return
 }
 
-func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaSuffMap map[string]string) {
+func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaDt time.Time, ghaSuffMap map[string]string) {
 	repo := origin
 	if strings.HasSuffix(repo, ".git") {
 		repo = repo[:len(repo)-4]
@@ -2642,7 +2643,6 @@ func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaSuffMap map[string]str
 			indices = append(indices, cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff)
 		}
 	}
-	prevHour := lib.PrevHourStart(time.Now())
 	if gSyncAllDatesMtx != nil {
 		gSyncAllDatesMtx.Lock()
 	}
@@ -2653,11 +2653,11 @@ func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaSuffMap map[string]str
 		}
 		dt, ok := gSyncAllDates[index][repo]
 		if !ok {
-			gSyncAllDates[index][repo] = prevHour
+			gSyncAllDates[index][repo] = ghaDt
 			continue
 		}
-		if prevHour.After(dt) {
-			gSyncAllDates[index][repo] = prevHour
+		if ghaDt.After(dt) {
+			gSyncAllDates[index][repo] = ghaDt
 		}
 	}
 	if gSyncAllDatesMtx != nil {
@@ -2701,7 +2701,7 @@ func enrichData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[strin
 			processed++
 		}
 	}
-	markSyncEvent(ctx, origin, ev.GHAFxSlug, ev.GHASuffMap)
+	markSyncEvent(ctx, origin, ev.GHAFxSlug, ev.GHADt, ev.GHASuffMap)
 	return
 }
 
@@ -2716,7 +2716,7 @@ func enrichDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates map
 	if enrichRepoDataOld(ctx, ev, origin, startDates) {
 		processed++
 	}
-	markSyncEvent(ctx, origin, ev.GHAFxSlug, ev.GHASuffMap)
+	markSyncEvent(ctx, origin, ev.GHAFxSlug, ev.GHADt, ev.GHASuffMap)
 	return
 }
 
@@ -3075,7 +3075,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 					rdtsMtx.Unlock()
 				}
 				if ctx.Debug > 0 {
-					lib.Printf("added %s with %s start date\n", repo, lib.ToGHADate2(dt))
+          lib.Printf("%s: added %s with %s start date\n", currSHA, repo, lib.ToGHADate2(dt))
 				}
 			}
 		}
@@ -3427,8 +3427,8 @@ func getOriginStartDates(ctx *lib.Ctx, idx string) (startDates map[string]time.T
 	// curl -XPOST -H 'Content-type: application/json' URL/_sql?format=csv -d"{\"query\":\"select origin, max(metadata__updated_on) from \\\"idx\\\" group by origin\"}"
 	data := fmt.Sprintf(
 		//`{"query":"select origin, max(metadata__updated_on) as date from \"%s\" group by origin","fetch_size":%d}`,
-		//`{"query":"select origin, max(gha_hour) as date from \"%s\" group by origin","fetch_size":%d}`,
-		`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
+		//`{"query":"select origin, max(metadata__enriched_on) as date from \"%s\" group by origin","fetch_size":%d}`,
+		`{"query":"select origin, max(gha_hour) as date from \"%s\" group by origin","fetch_size":%d}`,
 		idx,
 		10000,
 	)
