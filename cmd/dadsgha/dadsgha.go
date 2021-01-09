@@ -3049,6 +3049,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 				ch <- struct{}{}
 			}
 		}()
+		lib.Printf("detectMinReposStartDate: SHA: %s\n", currSHA)
 		ghaRepoDates := loadGHARepoDates(ctx, currSHA)
 		if ghaRepoDates == nil {
 			lib.Printf("No GHA repo dates file for SHA %s, skipping\n", currSHA)
