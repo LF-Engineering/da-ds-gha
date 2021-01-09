@@ -1623,6 +1623,12 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 		gGitHubReposMtx.RUnlock()
 	}
 	if found {
+		if repo == nil {
+			if ctx.Debug > 1 {
+				lib.Printf("getForksStarsCountAPI: repo %s found in the cache, but is nil\n", origin)
+			}
+			return
+		}
 		age := time.Now().Sub(repo["at"].(time.Time))
 		if ctx.Debug > 0 {
 			lib.Printf("getForksStarsCountAPI(%d): cache hit: %s (age %v)\n", cacheSize, origin, age)
