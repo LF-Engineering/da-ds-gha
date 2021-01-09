@@ -54,6 +54,9 @@ const (
 	cMaxGitHubUsersFileCacheAge = 7776000
 	// cNDaysGHAPeriod - how many days cache in GHA map files at once
 	cNDaysGHAPeriod = 5
+	// cAllowedRepoAPIAge - when doin fork event enrichment we use GH API:
+	// when more than 1 fork is processed then we skip repeating the same state for 15 minutes, and after that time we invaliadte the cache
+	cAllowedRepoAPIAge = 900
 )
 
 var (
@@ -1610,14 +1613,22 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 		gGitHubReposMtx.RUnlock()
 	}
 	if found {
+		age := repo["at"].(time.Time).Sub(time.Now())
 		if ctx.Debug > 0 {
-			lib.Printf("getForksStarsCountAPI(%d): cache hit: %s\n", cacheSize, origin)
+			lib.Printf("getForksStarsCountAPI(%d): cache hit: %s (age %v)\n", cacheSize, origin, age)
 		}
-		setResults()
-		return
-	}
-	if ctx.Debug > 0 {
-		lib.Printf("getForksStarsCountAPI(%d): cache miss: %s\n", cacheSize, origin)
+		if age.Seconds() < cAllowedRepoAPIAge {
+			setResults()
+			return
+		}
+		if ctx.Debug > 0 {
+			lib.Printf("getForksStarsCountAPI(%d): cache expired: %s (age %v)\n", cacheSize, origin, age)
+		}
+		found = false
+	} else {
+		if ctx.Debug > 0 {
+			lib.Printf("getForksStarsCountAPI(%d): cache miss: %s\n", cacheSize, origin)
+		}
 	}
 	// Try GitHub API 2nd
 	var c *github.Client
@@ -1715,6 +1726,7 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 				"size":        size,
 				"open_issues": openIssues,
 				"fork":        fork,
+				"at":          time.Now(),
 			}
 		}
 		break
