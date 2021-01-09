@@ -2481,13 +2481,14 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 		return
 	}
 	var (
-		forksCount int
-		starsCount int
-		size       int
-		openIssues int
-		subsCount  int
-		fork       bool
-		err        error
+		forksCount   int
+		starsCount   int
+		size         int
+		openIssues   int
+		subsCount    int
+		fork         bool
+		err          error
+		artificialID string
 	)
 	if forkEvent {
 		forksCount, starsCount, subsCount, size, openIssues, fork, ok, err = getForksStarsCountAPI(ctx, ev, origin)
@@ -2495,8 +2496,10 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 			lib.Printf("Cannot get %s repo info: %+v while processing %+v\n", origin, err, prettyPrint(ev))
 			return
 		}
+		artificialID = fmt.Sprintf("%s@%d", origin, now.Unix()/60)
 	} else {
 		forksCount, starsCount, size, openIssues, fork, ok = getForksStarsCount(ctx, ev, origin)
+		artificialID = fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
 	}
 	if !ok {
 		if ctx.Debug > 0 {
@@ -2506,7 +2509,6 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 	}
 	rich := make(map[string]interface{})
 	now := time.Now()
-	artificialID := fmt.Sprintf("%s@%d", origin, now.UnixNano())
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	if uuid == "" {
 		lib.Printf("error: enrichRepoData: failed to generate uuid for (%s,%s)\n", origin, artificialID)
@@ -2581,7 +2583,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	}
 	rich := make(map[string]interface{})
 	now := time.Now()
-	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.UnixNano())
+	artificialID := fmt.Sprintf("%s@%d", origin, ev.CreatedAt.Unix()/60)
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, origin, artificialID)
 	if uuid == "" {
 		lib.Printf("error: enrichRepoDataOld: failed to generate uuid for (%s,%s)\n", origin, artificialID)
