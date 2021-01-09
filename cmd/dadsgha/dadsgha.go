@@ -3075,7 +3075,7 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 					rdtsMtx.Unlock()
 				}
 				if ctx.Debug > 0 {
-          lib.Printf("%s: added %s with %s start date\n", currSHA, repo, lib.ToGHADate2(dt))
+					lib.Printf("%s: added %s with %s start date\n", currSHA, repo, lib.ToGHADate2(dt))
 				}
 			}
 		}
