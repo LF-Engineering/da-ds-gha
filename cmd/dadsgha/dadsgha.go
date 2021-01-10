@@ -4561,6 +4561,9 @@ func updateGHARepoDates(ctx *lib.Ctx) {
 						if mtx != nil {
 							mtx.Unlock()
 						}
+						//if currSHA == "f0" {
+						//	lib.Printf("%s: SHA: '%s' -> '%s' ('%s','%s',%d->%d)\n", sdt, r, currSHA, org, repo, ridt, idt)
+						//}
 					}
 					continue
 				}
