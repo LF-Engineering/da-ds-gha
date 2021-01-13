@@ -2637,7 +2637,7 @@ func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaDt time.Time, ghaSuffM
 	types := []string{"pull_request", "issue", "repository"}
 	indices := []string{}
 	for _, typ := range types {
-		suff, ok := ghaSuffMap["repository"]
+		suff, ok := ghaSuffMap[typ]
 		if ok {
 			indices = append(indices, cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff)
 		}
