@@ -2034,11 +2034,31 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		dt := ev.CreatedAt
 		authorKey := "user_data"
 		affsItems := make(map[string]interface{})
+		var (
+			affsIdentity map[string]interface{}
+			empty        bool
+			err          error
+			t            int
+			got          bool
+		)
 		for i, identity := range identities {
 			role := roles[i]
-			affsIdentity, empty, err := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-			if err != nil {
-				lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s\n", err, identity, dt, role, ev.GHAFxSlug)
+			for {
+				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+				if err != nil {
+					if t < 3 {
+						t++
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+						time.Sleep(time.Duration(t) * time.Second)
+						continue
+					}
+					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+					break
+				}
+				got = true
+				break
+			}
+			if !got {
 				return
 			}
 			if empty {
@@ -2402,11 +2422,31 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		dt := ev.CreatedAt
 		authorKey := "user_data"
 		affsItems := make(map[string]interface{})
+		var (
+			affsIdentity map[string]interface{}
+			empty        bool
+			err          error
+			t            int
+			got          bool
+		)
 		for i, identity := range identities {
 			role := roles[i]
-			affsIdentity, empty, err := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-			if err != nil {
-				lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s\n", err, identity, dt, role, ev.GHAFxSlug)
+			for {
+				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+				if err != nil {
+					if t < 3 {
+						t++
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+						time.Sleep(time.Duration(t) * time.Second)
+						continue
+					}
+					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+					break
+				}
+				got = true
+				break
+			}
+			if !got {
 				return
 			}
 			if empty {
