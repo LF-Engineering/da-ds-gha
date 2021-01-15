@@ -2030,7 +2030,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		if ctx.Debug > 0 {
 			debugSQL = 2
 		}
-		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, Debug: ctx.Debug, DebugSQL: debugSQL}
+		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, AffiliationAPIURL: gDadsCtx.AffiliationAPIURL, Debug: ctx.Debug, DebugSQL: debugSQL}
 		dt := ev.CreatedAt
 		authorKey := "user_data"
 		affsItems := make(map[string]interface{})
@@ -2394,7 +2394,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		if ctx.Debug > 0 {
 			debugSQL = 2
 		}
-		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, Debug: ctx.Debug, DebugSQL: debugSQL}
+		pctx := &dads.Ctx{ProjectSlug: ev.GHAFxSlug, DB: gDadsCtx.DB, AffiliationAPIURL: gDadsCtx.AffiliationAPIURL, Debug: ctx.Debug, DebugSQL: debugSQL}
 		dt := ev.CreatedAt
 		authorKey := "user_data"
 		affsItems := make(map[string]interface{})
@@ -4687,6 +4687,7 @@ func initDadsCtx(ctx *lib.Ctx) {
 	_ = os.Setenv("DA_DS", "github")
 	_ = os.Setenv("DA_GITHUB_DB_CONN", os.Getenv("GHA_DB_CONN"))
 	_ = os.Setenv("DA_GITHUB_DB_BULK_SIZE", os.Getenv("GHA_DB_BULK_SIZE"))
+	_ = os.Setenv("DA_GITHUB_AFFILIATION_API_URL", os.Getenv("GHA_AFFILIATION_API_URL"))
 	gDadsCtx.Init()
 	gDadsCtx.Debug = ctx.Debug
 	gDadsCtx.ST = ctx.ST

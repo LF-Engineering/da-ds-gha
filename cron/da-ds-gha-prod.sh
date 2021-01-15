@@ -19,6 +19,8 @@ export GHA_MEM_HEARTBEAT_GBYTES=40
 export GHA_ES_URL="`cat ES_URL.prod.secret`"
 export GHA_DB_CONN="`cat DB_CONN.prod.secret`"
 export GHA_GITHUB_OAUTH="`cat OAUTHS.secret`"
+export GHA_AFFILIATION_API_URL="cat API_URL.prod.secret"
+export AUTH0_DATA="`cat AUTH0_DATA.prod.secret`"
 if [ -z "$GHA_ES_URL" ]
 then
   echo "$0: missing GHA_ES_URL env variable, exiting"
@@ -32,6 +34,16 @@ fi
 if [ -z "$GHA_GITHUB_OAUTH" ]
 then
   echo "$0: missing GHA_GITHUB_OAUTH env variable, exiting"
-  exit 1
+  exit 3
+fi
+if [ -z "$GHA_AFFILIATION_API_URL" ]
+then
+  echo "$0: missing GHA_AFFILIATION_API_URL env variable, exiting"
+  exit 4
+fi
+if [ -z "$AUTH0_DATA" ]
+then
+  echo "$0: missing AUTH0_DATA env variable, exiting"
+  exit 5
 fi
 /usr/bin/da-ds-gha-cron-task.sh da-ds-gha-prod prod 1>> /tmp/da-ds-gha-prod.log 2>>/tmp/da-ds-gha-prod.err
