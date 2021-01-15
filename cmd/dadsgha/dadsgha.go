@@ -2036,7 +2036,11 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		affsItems := make(map[string]interface{})
 		for i, identity := range identities {
 			role := roles[i]
-			affsIdentity, empty := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+			affsIdentity, empty, err := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+			if err != nil {
+				lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s\n", err, identity, dt, role, ev.GHAFxSlug)
+				return
+			}
 			if empty {
 				email, _ := identity["email"].(string)
 				name, _ := identity["name"].(string)
@@ -2400,7 +2404,11 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		affsItems := make(map[string]interface{})
 		for i, identity := range identities {
 			role := roles[i]
-			affsIdentity, empty := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+			affsIdentity, empty, err := dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+			if err != nil {
+				lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s\n", err, identity, dt, role, ev.GHAFxSlug)
+				return
+			}
 			if empty {
 				email, _ := identity["email"].(string)
 				name, _ := identity["name"].(string)

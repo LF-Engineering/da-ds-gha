@@ -19,7 +19,7 @@ export GHA_MEM_HEARTBEAT_GBYTES=12
 export GHA_ES_URL="`cat ES_URL.test.secret`"
 export GHA_DB_CONN="`cat DB_CONN.test.secret`"
 export GHA_GITHUB_OAUTH="`cat OAUTHS.secret`"
-export GHA_AFFILIATION_API_URL="cat API_URL.test.secret"
+export GHA_AFFILIATION_API_URL="`cat API_URL.test.secret`"
 export AUTH0_DATA="`cat AUTH0_DATA.test.secret`"
 if [ -z "$GHA_ES_URL" ]
 then
