@@ -149,7 +149,8 @@ func isAbuse(e error) bool {
 	if e == nil {
 		return false
 	}
-	return strings.Contains(e.Error(), "403 You have triggered an abuse detection mechanism")
+	errStr := e.Error()
+	return strings.Contains(errStr, "403 You have triggered an abuse detection mechanism") || strings.Contains(errStr, "403 API rate limit")
 }
 
 func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found bool, err error) {
