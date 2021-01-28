@@ -145,6 +145,13 @@ func handleRate(ctx *lib.Ctx) (aHint int, canCache bool) {
 	return
 }
 
+func isAbuse(e error) bool {
+	if e == nil {
+		return false
+	}
+	return strings.Contains(e.Error(), "403 You have triggered an abuse detection mechanism")
+}
+
 func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found bool, err error) {
 	var (
 		ok        bool
@@ -284,6 +291,12 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 		if e != nil && !retry {
 			lib.Printf("Error getting %s user: response: %+v, error: %+v, retrying rate\n", login, response, e)
 			lib.Printf("getGitHubUser: handle rate\n")
+			abuse := isAbuse(err)
+			if abuse {
+				sleepFor := 30 + rand.Intn(30)
+				lib.Printf("GitHub detected abuse (get user %s), waiting for %ds\n", login, sleepFor)
+				time.Sleep(time.Duration(sleepFor) * time.Second)
+			}
 			if gGitHubMtx != nil {
 				gGitHubMtx.Lock()
 			}
@@ -291,7 +304,9 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 			if gGitHubMtx != nil {
 				gGitHubMtx.Unlock()
 			}
-			retry = true
+			if !abuse {
+				retry = true
+			}
 			continue
 		}
 		if e != nil {
@@ -447,8 +462,16 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 			}
 			if err != nil && !retry {
 				lib.Printf("Error getting repositories list for org/user: %s: response: %+v, error: %+v, retrying rate\n", path, response, err)
+				abuse := isAbuse(err)
+				if abuse {
+					sleepFor := 30 + rand.Intn(30)
+					lib.Printf("GitHub detected abuse (get org/user repos %s), waiting for %ds\n", path, sleepFor)
+					time.Sleep(time.Duration(sleepFor) * time.Second)
+				}
 				hint, _ = handleRate(ctx)
-				retry = true
+				if !abuse {
+					retry = true
+				}
 				continue
 			}
 			lib.FatalOnError(err)
@@ -1706,6 +1729,12 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 		if e != nil && !retry {
 			lib.Printf("Error getting %s repo: response: %+v, error: %+v, retrying rate\n", origin, response, e)
 			lib.Printf("getForksStarsCountAPI: handle rate\n")
+			abuse := isAbuse(err)
+			if abuse {
+				sleepFor := 30 + rand.Intn(30)
+				lib.Printf("GitHub detected abuse (get repo %s), waiting for %ds\n", origin, sleepFor)
+				time.Sleep(time.Duration(sleepFor) * time.Second)
+			}
 			if gGitHubMtx != nil {
 				gGitHubMtx.Lock()
 			}
@@ -1713,7 +1742,9 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 			if gGitHubMtx != nil {
 				gGitHubMtx.Unlock()
 			}
-			retry = true
+			if !abuse {
+				retry = true
+			}
 			continue
 		}
 		if e != nil {
