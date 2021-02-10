@@ -28,5 +28,6 @@
 *.yml
 *.log
 *.txt
+*.old
 
 /dev-analytics-api
