@@ -589,13 +589,22 @@ func processFixtures(ctx *lib.Ctx, fixtureFiles []string) (config map[[2]string]
 	for _, fixture := range fixtures {
 		fSlug := fixture.Native.Slug
 		suff := ""
+		cats := make(map[string]struct{})
 		for _, ds := range fixture.DataSources {
 			dss := strings.ToLower(strings.TrimSpace(ds.Slug))
 			ary := strings.Split(dss, "/")
 			if ary[0] != "github" {
 				continue
 			}
-			suff += ary[1] + "=" + ds.IndexSuffix + ","
+			// We merge PR & issue data into te same index
+			if ary[1] == "pull_request" {
+				ary[1] = "issue"
+			}
+			_, ok := cats[ary[1]]
+			if !ok {
+				cats[ary[1]] = struct{}{}
+				suff += ary[1] + "=" + ds.IndexSuffix + ","
+			}
 		}
 		if suff != "" {
 			suff := suff[:len(suff)-1]
@@ -2177,14 +2186,16 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		return
 	}
 	fSlug := ev.GHAFxSlug
-	suff, ok := ev.GHASuffMap["pull_request"]
+	// suff, ok := ev.GHASuffMap["pull_request"]
+	suff, ok := ev.GHASuffMap["issue"]
 	if !ok {
 		if ctx.Debug > 0 {
 			lib.Printf("%s: pull request not configured\n", origin)
 		}
 		return
 	}
-	idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-pull_request" + suff
+	// idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-pull_request" + suff
+	idx := cPrefix + strings.Replace(fSlug, "/", "-", -1) + "-github-issue" + suff
 	var startDate time.Time
 	indexStartDates, ok := startDates[idx]
 	if ok {
@@ -2714,7 +2725,8 @@ func markSyncEvent(ctx *lib.Ctx, origin, fSlug string, ghaDt time.Time, ghaSuffM
 	if strings.HasSuffix(repo, ".git") {
 		repo = repo[:len(repo)-4]
 	}
-	types := []string{"pull_request", "issue", "repository"}
+	// types := []string{"pull_request", "issue", "repository"}
+	types := []string{"issue", "repository"}
 	indices := []string{}
 	for _, typ := range types {
 		suff, ok := ghaSuffMap[typ]
@@ -2936,7 +2948,8 @@ func getGHAJSONs(ch chan *time.Time, ctx *lib.Ctx, dt time.Time, config map[[2]s
 			return
 		}
 		needsProcessing := false
-		types := []string{"pull_request", "issue", "repository"}
+		// types := []string{"pull_request", "issue", "repository"}
+		types := []string{"issue", "repository"}
 		for key, re := range config {
 			if needsProcessing {
 				break
@@ -3110,7 +3123,8 @@ func detectMinReposStartDate(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp, 
 	defer func() { runGC() }()
 	minFrom = lib.PrevHourStart(time.Now())
 	minRepo := ""
-	types := []string{"pull_request", "issue", "repository"}
+	// types := []string{"pull_request", "issue", "repository"}
+	types := []string{"issue", "repository"}
 	reAll, _ := config[[2]string{"", ""}]
 	rdts := make(map[string]time.Time)
 	var rdtsMtx *sync.Mutex
@@ -3725,7 +3739,8 @@ func getStartDates(ctx *lib.Ctx, config map[[2]string]*regexp.Regexp) (startDate
 		ary := strings.Split(fSlug, ":")
 		fSlug = ary[0]
 		suffMap := getIndexSuffixMap(ary[1])
-		for _, typ := range []string{"pull_request", "issue", "repository"} {
+		// for _, typ := range []string{"pull_request", "issue", "repository"} {
+		for _, typ := range []string{"issue", "repository"} {
 			suff, ok := suffMap[typ]
 			if ok {
 				indices[cPrefix+strings.Replace(fSlug, "/", "-", -1)+"-github-"+typ+suff] = struct{}{}
