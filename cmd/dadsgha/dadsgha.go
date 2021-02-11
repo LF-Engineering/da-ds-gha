@@ -1043,18 +1043,18 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 		}
 	}
 	ch := make(chan error)
-	go func() { _ = insertToES(ch, ctx, insertItems) }()
+	go func() { _ = uploadToESInternal(ch, ctx, insertItems, true) }()
 	defer func() {
 		e := <-ch
 		if err == nil {
-			err = fmt.Errorf("insertToES: %+v", e)
+			err = fmt.Errorf("uploadToESIternal(insert): %+v", e)
 			return
 		}
 		if e == nil {
 			err = fmt.Errorf("uploadToES: %+v", err)
 			return
 		}
-		err = fmt.Errorf("insertToES: %+v, uploadToES: %+v", e, err)
+		err = fmt.Errorf("uploadToESInternal(insert): %+v, uploadToES: %+v", e, err)
 	}()
 	uuids := make(map[string]struct{})
 	indices := make(map[string]struct{})
@@ -1258,7 +1258,11 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 		}
 		upsertItems = append(upsertItems, data)
 	}
-	fmt.Printf("====>\n%+v\n<====\n", upsertItems)
+	// fmt.Printf("====>\n%+v\n<====\n", upsertItems)
+	err = uploadToESInternal(nil, ctx, upsertItems, false)
+	if err != nil {
+		lib.Printf("uploadToESInternal(upsert): %+v\n", err)
+	}
 	return
 }
 
@@ -1301,9 +1305,11 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 		return
 	}
 	mergeValues := func(k string, va, vb interface{}) (v interface{}) {
-		defer func() {
-			lib.Printf("%s: (%v,%T) <-> (%v,%T) -> (%v,%T)\n", k, printObj(va), va, printObj(vb), vb, printObj(v), v)
-		}()
+		/*
+			defer func() {
+				lib.Printf("%s: (%v,%T) <-> (%v,%T) -> (%v,%T)\n", k, printObj(va), va, printObj(vb), vb, printObj(v), v)
+			}()
+		*/
 		switch k {
 		case "labels":
 			vba, okb := i2sa(vb)
@@ -1334,13 +1340,11 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 		case "assignees_data", "requested_reviewers_data", "reviewer_data":
 			vba, okb := i2ma(vb)
 			if okb && len(vba) > 0 {
-				fmt.Printf("correct %s in B\n", k)
 				v = vb
 			} else {
-				fmt.Printf("correct %s in A\n", k)
 				v = va
 			}
-		case "all_assignees_data", "all_requested_reviewers_data", "all_reviewer_data":
+		case "all_assignees_data", "all_requested_reviewers_data":
 			vaa, oka := i2ma(va)
 			vba, okb := i2ma(vb)
 			objs := make(map[string]map[string]interface{})
@@ -1349,20 +1353,13 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				objKey = "assignee_id"
 			} else if k == "all_requested_reviewers_data" {
 				objKey = "requested_reviewer_id"
-			} else if k == "all_reviewer_data" {
-				// will only put unique reviewers, each with 1 comment
-				// objKey = "review_user_id"
-				// will put all unique comments (so one user can be listed more than one)
-				objKey = "review_id"
 			} else {
-				fmt.Printf("unknown key %s\n", k)
 				v = vb
 				return
 			}
 			if oka {
 				for _, it := range vaa {
 					id, ok := it[objKey].(string)
-					fmt.Printf("A %s (%s,%v)\n", k, id, ok)
 					if ok {
 						objs[id] = it
 					}
@@ -1371,7 +1368,6 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 			if okb {
 				for _, it := range vba {
 					id, ok := it[objKey].(string)
-					fmt.Printf("B %s (%s,%v)\n", k, id, ok)
 					if ok {
 						objs[id] = it
 					}
@@ -1382,9 +1378,52 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				ary = append(ary, obj)
 			}
 			v = ary
-			if oka && okb && len(vaa) > 0 && len(vba) > 0 && len(ary) > len(vaa) && len(ary) > len(vba) {
-				fmt.Printf("ALL_%s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
+		case "all_reviewer_data":
+			vaa, oka := i2ma(va)
+			vba, okb := i2ma(vb)
+			objs := make(map[int64]map[string]interface{})
+			// will only put unique reviewers, each with 1 comment
+			// objKey = "review_user_id"
+			// will put all unique comments (so one user can be listed more than one)
+			objKey := "review_id"
+			var (
+				id int64
+				ii int
+				ok bool
+			)
+			if oka {
+				for _, it := range vaa {
+					id, ok = it[objKey].(int64)
+					if !ok {
+						ii, ok = it[objKey].(int)
+						if ok {
+							id = int64(ii)
+						}
+					}
+					if ok {
+						objs[id] = it
+					}
+				}
 			}
+			if okb {
+				for _, it := range vba {
+					id, ok = it[objKey].(int64)
+					if !ok {
+						ii, ok = it[objKey].(int)
+						if ok {
+							id = int64(ii)
+						}
+					}
+					if ok {
+						objs[id] = it
+					}
+				}
+			}
+			ary := []map[string]interface{}{}
+			for _, obj := range objs {
+				ary = append(ary, obj)
+			}
+			v = ary
 		case "comments", "issue_comments", "pr_comments", "issue_time_to_close_days", "pr_time_to_close_days", "time_to_close_days", "issue_time_open_days", "pr_time_open_days", "time_open_days",
 			"title", "title_analyzed", "num_review_comments", "commits", "additions", "deletions", "changed_files", "forks", "code_merge_duration":
 			// B unless null
@@ -1419,7 +1458,7 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 	return
 }
 
-func insertToES(ch chan error, ctx *lib.Ctx, items []map[string]interface{}) (err error) {
+func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interface{}, insert bool) (err error) {
 	// TODO: connect s3 retry mechanism
 	if ch != nil {
 		defer func() {
@@ -1427,7 +1466,10 @@ func insertToES(ch chan error, ctx *lib.Ctx, items []map[string]interface{}) (er
 		}()
 	}
 	nItems := len(items)
-	lib.Printf("bulk uploading %d documents (insert)\n", nItems)
+	lib.Printf("bulk uploading %d documents (insert: %v)\n", nItems, insert)
+	if !insert {
+		return
+	}
 	url := ctx.ESURL + "/_bulk?refresh=wait_for"
 	payloads := []byte{}
 	newLine := []byte("\n")
