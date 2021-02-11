@@ -1751,13 +1751,19 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 		riches = append(riches, rich)
 		gRichItems[uuid] = riches
 	}
-	nRichItems := 0
+	nRichItemsIns := 0
+	nRichItemsUps := 0
 	for _, riches := range gRichItems {
-		nRichItems += len(riches)
+		_, upsert := riches[0]["upsert"]
+		if upsert {
+			nRichItemsUps++
+		} else {
+			nRichItemsIns += len(riches)
+		}
 	}
-	if nRichItems < ctx.ESBulkSize {
+	if nRichItemsIns < ctx.ESBulkSize && nRichItemsUps < ctx.ESBulkSize {
 		if ctx.Debug > 2 {
-			lib.Printf("Pending items: %d\n", nRichItems)
+			lib.Printf("Pending items: %d,%d\n", nRichItemsIns, nRichItemsUps)
 		}
 		return
 	}
