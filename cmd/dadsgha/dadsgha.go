@@ -995,6 +995,15 @@ func prettyPrint(data interface{}) string {
 	return string(pretty)
 }
 
+func printObj(data interface{}) string {
+	j := jsoniter.Config{SortMapKeys: true, EscapeHTML: true}.Froze()
+	pretty, err := j.Marshal(data)
+	if err != nil {
+		return fmt.Sprintf("%+v", data)
+	}
+	return string(pretty)
+}
+
 func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	n, u := 0, 0
 	for _, item := range items {
@@ -1217,11 +1226,11 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 				lib.Printf("%s finished %d items\n", pattern, allItems)
 				break
 			}
-			for i, item := range items {
+			for _, item := range items {
 				doc, _ := item.(map[string]interface{})["_source"].(map[string]interface{})
 				uuid, _ := doc["uuid"].(string)
 				uuidsCurrent[uuid] = doc
-				lib.Printf("%d/%d: %s:%d\n", i, nItems, uuid, len(doc))
+				// lib.Printf("%d/%d: %s:%d\n", i, nItems, uuid, len(doc))
 			}
 			allItems += nItems
 			lib.Printf("%s processed %d items (%d so far)\n", pattern, nItems, allItems)
@@ -1236,6 +1245,96 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 		}
 	}
 	lib.Printf("found %d/%d current uuids values\n", len(uuidsCurrent), nUUIDs)
+	upsertItems := []map[string]interface{}{}
+	for uuid, updates := range uuidsUpdates {
+		data, ok := uuidsCurrent[uuid]
+		if ok {
+			data = mergeIssuePRData(data, uuidsUpdates[uuid][0])
+		} else {
+			data = uuidsUpdates[uuid][0]
+		}
+		for _, update := range updates[1:] {
+			data = mergeIssuePRData(data, update)
+		}
+		upsertItems = append(upsertItems, data)
+	}
+	fmt.Printf("====>\n%+v\n<====\n", upsertItems)
+	return
+}
+
+func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) {
+	res = make(map[string]interface{})
+	mergeValues := func(k string, va, vb interface{}) (v interface{}) {
+		defer func() {
+			if strings.Contains(k, "labels") {
+				lib.Printf("%s: (%v,%T) <-> (%v,%T) -> (%v,%T)\n", k, printObj(va), va, printObj(vb), vb, printObj(v), v)
+			}
+		}()
+		switch k {
+		case "comments", "issue_comments", "pr_comments", "issue_time_to_close_days", "pr_time_to_close_days", "time_to_close_days", "issue_time_open_days", "pr_time_open_days", "time_open_days",
+			"title", "title_analyzed", "num_review_comments", "commits", "additions", "deletions", "changed_files", "forks", "code_merge_duration":
+			// B unless null
+			if vb == nil {
+				v = va
+			} else {
+				v = vb
+			}
+		case "labels":
+			vaa, oka := va.([]interface{})
+			vba, okb := vb.([]interface{})
+			if okb && len(vba) > 0 {
+				v = vb
+			} else {
+				v = va
+			}
+			if oka && okb && len(vaa) > 0 && len(vba) > 0 {
+				fmt.Printf("LABELS: %s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
+			}
+		case "all_labels":
+			vaa, oka := va.([]interface{})
+			vba, okb := vb.([]interface{})
+			labels := make(map[string]struct{})
+			if oka {
+				for _, it := range vaa {
+					labels[it.(string)] = struct{}{}
+				}
+			}
+			if okb {
+				for _, it := range vba {
+					labels[it.(string)] = struct{}{}
+				}
+			}
+			ary := []string{}
+			for label := range labels {
+				ary = append(ary, label)
+			}
+			v = ary
+			if oka && okb && len(vaa) > 0 && len(vba) > 0 {
+				fmt.Printf("ALL_LABELS: %s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
+			}
+		default:
+			// Always prefer B (newer value), so it can update to null
+			v = vb
+			// fmt.Printf("Default: %s,%v,%T,%v,%T\n", k, va, va, vb, vb)
+		}
+		return
+	}
+	for k, va := range a {
+		vb, ok := b[k]
+		if !ok {
+			res[k] = va
+			continue
+		}
+		res[k] = mergeValues(k, va, vb)
+	}
+	for k, vb := range b {
+		va, ok := a[k]
+		if !ok {
+			res[k] = vb
+			continue
+		}
+		res[k] = mergeValues(k, va, vb)
+	}
 	return
 }
 
@@ -2165,11 +2264,13 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	} else {
 		rich["time_to_close_days"] = float64(issue.ClosedAt.Sub(issue.CreatedAt).Seconds()) / 86400.0
 	}
+	rich["issue_time_to_close_days"] = rich["time_to_close_days"]
 	if issue.State != "closed" {
 		rich["time_open_days"] = float64(now.Sub(issue.CreatedAt).Seconds()) / 86400.0
 	} else {
 		rich["time_open_days"] = rich["time_to_close_days"]
 	}
+	rich["issue_time_open_days"] = rich["time_open_days"]
 	login := issue.User.Login
 	rich["user_login"] = login
 	userData, found, err := getGitHubUser(ctx, login)
@@ -2330,9 +2431,13 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["id_in_repo"] = issue.Number
 	rich["title"] = issue.Title
 	rich["title_analyzed"] = issue.Title
+	rich["state"] = issue.State
 	rich["issue_state"] = issue.State
+	rich["issue_created_at"] = issue.CreatedAt
 	rich["created_at"] = issue.CreatedAt
 	rich["closed_at"] = issue.ClosedAt
+	rich["updated_at"] = issue.UpdatedAt
+	rich["issue_closed_at"] = issue.ClosedAt
 	rich["issue_updated_at"] = issue.UpdatedAt
 	sNumber := strconv.Itoa(issue.Number)
 	mid := "/issues/"
@@ -2341,18 +2446,24 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	}
 	rich["url"] = repo + mid + sNumber
 	rich["url_id"] = githubRepo + mid + sNumber
+	rich["issue_url"] = rich["url"]
+	rich["issue_url_id"] = rich["url_id"]
 	labels := []string{}
 	for _, label := range issue.Labels {
 		labels = append(labels, label.Name)
 	}
+	rich["all_labels"] = labels
 	rich["labels"] = labels
 	rich["comments"] = issue.Comments
+	rich["issue_comments"] = issue.Comments
 	rich["locked"] = issue.Locked
+	rich["issue_locked"] = issue.Locked
 	if issue.Milestone != nil {
 		rich["milestone"] = issue.Milestone.Name
 	} else {
 		rich["milestone"] = nil
 	}
+	rich["issue_milestone"] = rich["milestone"]
 	// FIXME: we don't have this information in GHA
 	// rich["time_to_first_attention"]
 	// Affiliations
@@ -2452,6 +2563,14 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			rich[orgsKey] = []interface{}{}
 		}
 		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
+	}
+	objProps := []string{"assignees_data"}
+	for _, objProp := range objProps {
+		_, ok := rich[objProp]
+		if !ok {
+			rich[objProp] = []interface{}{}
+		}
+		rich["all_"+objProp] = rich[objProp]
 	}
 	addRichItem(ctx, rich)
 	processed = true
@@ -2553,11 +2672,13 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	} else {
 		rich["time_to_close_days"] = float64(pr.ClosedAt.Sub(pr.CreatedAt).Seconds()) / 86400.0
 	}
+	rich["pr_issue_time_to_close_days"] = rich["time_to_close_days"]
 	if pr.State != "closed" {
 		rich["time_open_days"] = float64(now.Sub(pr.CreatedAt).Seconds()) / 86400.0
 	} else {
 		rich["time_open_days"] = rich["time_to_close_days"]
 	}
+	rich["pr_time_open_days"] = rich["time_open_days"]
 	login := pr.User.Login
 	rich["user_login"] = login
 	userData, found, err := getGitHubUser(ctx, login)
@@ -2788,24 +2909,34 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["id_in_repo"] = pr.Number
 	rich["title"] = pr.Title
 	rich["title_analyzed"] = pr.Title
+	rich["state"] = pr.State
 	rich["pr_state"] = pr.State
+	rich["pr_created_at"] = pr.CreatedAt
 	rich["created_at"] = pr.CreatedAt
 	rich["closed_at"] = pr.ClosedAt
+	rich["updated_at"] = pr.UpdatedAt
+	rich["pr_closed_at"] = pr.ClosedAt
 	rich["pr_updated_at"] = pr.UpdatedAt
 	rich["merged_at"] = pr.MergedAt
 	rich["merged"] = pr.Merged
 	sNumber := strconv.Itoa(pr.Number)
 	rich["url"] = repo + "/pull/" + sNumber
 	rich["url_id"] = githubRepo + "/pull/" + sNumber
+	rich["pr_url"] = rich["url"]
+	rich["pr_url_id"] = rich["url_id"]
+	rich["all_labels"] = []string{}
 	rich["labels"] = []string{}
 	rich["comments"] = pr.Comments
+	rich["pr_comments"] = pr.Comments
 	rich["num_review_comments"] = pr.ReviewComments
 	rich["locked"] = pr.Locked
+	rich["pr_locked"] = pr.Locked
 	if pr.Milestone != nil {
 		rich["milestone"] = pr.Milestone.Name
 	} else {
 		rich["milestone"] = nil
 	}
+	rich["pr_milestone"] = rich["milestone"]
 	rich["commits"] = pr.Commits
 	rich["additions"] = pr.Additions
 	rich["deletions"] = pr.Deletions
@@ -2944,6 +3075,14 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		m["review_path"] = comment.Path
 		m["review_position"] = comment.Position
 		m["review_original_position"] = comment.OriginalPosition
+	}
+	objProps := []string{"assignees_data", "requested_reviewers_data", "reviewer_data"}
+	for _, objProp := range objProps {
+		_, ok := rich[objProp]
+		if !ok {
+			rich[objProp] = []interface{}{}
+		}
+		rich["all_"+objProp] = rich[objProp]
 	}
 	addRichItem(ctx, rich)
 	processed = true
