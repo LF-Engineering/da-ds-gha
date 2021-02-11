@@ -83,7 +83,7 @@ var (
 	gJSONsLocked        bool
 	gAllJSONsBytes      int64
 	gMaxJSONsBytes      int64
-	gRichItems          = map[string]map[string]interface{}{}
+	gRichItems          = map[string][]map[string]interface{}{}
 	gEnsuredIndices     = map[string]struct{}{}
 	gGitHubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
 	gNewFormatStarts    = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -948,8 +948,10 @@ func ensureIndex(ch chan struct{}, ctx *lib.Ctx, idx string) {
 // runs inside gRichMtx so accessing gRichItems is safe
 func ensureIndicesPresent(ctx *lib.Ctx) {
 	neededIndices := make(map[string]struct{})
-	for _, rich := range gRichItems {
-		neededIndices[rich["index"].(string)] = struct{}{}
+	for _, riches := range gRichItems {
+		for _, rich := range riches {
+			neededIndices[rich["index"].(string)] = struct{}{}
+		}
 	}
 	// fmt.Printf("Needed indices: %+v\n", neededIndices)
 	if gThrN > 1 {
@@ -985,7 +987,8 @@ func ensureIndicesPresent(ctx *lib.Ctx) {
 }
 
 func prettyPrint(data interface{}) string {
-	pretty, err := jsoniter.MarshalIndent(data, "", "  ")
+	j := jsoniter.Config{SortMapKeys: true, EscapeHTML: true}.Froze()
+	pretty, err := j.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Sprintf("%T: %+v", data, data)
 	}
@@ -1019,10 +1022,232 @@ func markSyncDates(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	return
 }
 
-func uploadToES(ctx *lib.Ctx, items []map[string]interface{}) (err error) {
+func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
+	insertItems := []map[string]interface{}{}
+	for _, items := range data {
+		_, ok := items[0]["upsert"]
+		if ok {
+			continue
+		}
+		for _, item := range items {
+			insertItems = append(insertItems, item)
+		}
+	}
+	ch := make(chan error)
+	go func() { _ = insertToES(ch, ctx, insertItems) }()
+	defer func() {
+		e := <-ch
+		if err == nil {
+			err = fmt.Errorf("insertToES: %+v", e)
+			return
+		}
+		if e == nil {
+			err = fmt.Errorf("uploadToES: %+v", err)
+			return
+		}
+		err = fmt.Errorf("insertToES: %+v, uploadToES: %+v", e, err)
+	}()
+	uuids := make(map[string]struct{})
+	indices := make(map[string]struct{})
+	uuidsUpdates := make(map[string][]map[string]interface{})
+	uuidsCurrent := make(map[string]map[string]interface{})
+	key := "metadata__updated_on"
+	for _, items := range data {
+		_, ok := items[0]["upsert"]
+		if !ok {
+			continue
+		}
+		uuid, _ := items[0]["uuid"].(string)
+		idx, _ := items[0]["index"].(string)
+		uuids[uuid] = struct{}{}
+		indices[idx] = struct{}{}
+		sort.Slice(
+			items,
+			func(i, j int) bool {
+				a, _ := items[i][key].(time.Time)
+				b, _ := items[j][key].(time.Time)
+				return a.Before(b)
+			},
+		)
+		uuidsUpdates[uuid] = items
+	}
+	nUUIDs := len(uuids)
+	packSize := ctx.ESBulkSize
+	if packSize > 1000 {
+		packSize = 1000
+	}
+	nPacks := nUUIDs / packSize
+	if nUUIDs%packSize != 0 {
+		nPacks++
+	}
+	auuids := []string{}
+	for uuid := range uuids {
+		auuids = append(auuids, uuid)
+	}
+	packs := []string{}
+	for i := 0; i < nPacks; i++ {
+		from := i * packSize
+		to := from + packSize
+		if to > nUUIDs {
+			to = nUUIDs
+		}
+		s := "["
+		for j := from; j < to; j++ {
+			s += `"` + auuids[j] + `",`
+		}
+		if s != "[" {
+			s = s[:len(s)-1] + "]"
+			packs = append(packs, s)
+		}
+	}
+	pattern := ""
+	for idx := range indices {
+		pattern += idx + ","
+	}
+	pattern = pattern[:len(pattern)-1]
+	nIndices := len(indices)
+	lib.Printf("processing %d uuids from %d indices in %d packs\n", nUUIDs, nIndices, nPacks)
+	method := "POST"
+	fetchCurrent := func(packNum int) (err error) {
+		var (
+			url     string
+			rurl    string
+			scroll  *string
+			payload *bytes.Reader
+		)
+		defer func() {
+			if scroll == nil {
+				return
+			}
+			url := ctx.ESURL + "/_search/scroll"
+			rurl := "/_search/scroll"
+			payloadBytes := []byte(`{"scroll_id":"` + *scroll + `"}`)
+			payload := bytes.NewReader(payloadBytes)
+			req, err := http.NewRequest("DELETE", url, payload)
+			if err != nil {
+				lib.Printf("new request error: %+v for DELETE url: %s, payload: %s\n", err, rurl, string(payloadBytes))
+				err = nil
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				lib.Printf("do request error: %+v for DELETE url: %s, payload: %s\n", err, rurl, string(payloadBytes))
+				err = nil
+				return
+			}
+			status := resp.StatusCode
+			if status != 200 {
+				lib.Printf("%s: deleting scroll: %s %v status: %d\n", pattern, rurl, string(payloadBytes), resp.StatusCode)
+			}
+		}()
+		allItems := 0
+		for {
+			if scroll == nil {
+				url = ctx.ESURL + "/" + pattern + "/_search?scroll=15m&size=1000"
+				rurl = "/" + pattern + "/_search?scroll=15m&size=1000"
+				payload = bytes.NewReader([]byte(`{"query":{"terms":{"uuid":` + packs[packNum] + `}}}`))
+			} else {
+				url = ctx.ESURL + "/_search/scroll"
+				rurl = "/_search/scroll"
+				payload = bytes.NewReader([]byte(`{"scroll":"15m","scroll_id":"` + *scroll + `"}`))
+			}
+			var req *http.Request
+			req, err = http.NewRequest(method, url, payload)
+			if err != nil {
+				lib.Printf("new request error: %+v for %s url: %s\n", err, method, rurl)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			var resp *http.Response
+			resp, err = http.DefaultClient.Do(req)
+			if err != nil {
+				lib.Printf("do request error: %+v for %s url: %s\n", err, method, rurl)
+				return
+			}
+			var body []byte
+			body, err = ioutil.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			status := resp.StatusCode
+			//fmt.Printf("status: %d\n", status)
+			if status == 404 {
+				if scroll != nil && strings.Contains(string(body), "No search context found for id") {
+					lib.Printf("%s: scroll %s expired, re-running\n", pattern, *scroll)
+					scroll = nil
+					err = nil
+					continue
+				}
+				return
+			}
+			if status == 500 {
+				if scroll == nil && status == 500 && strings.Contains(string(body), "Trying to create too many scroll contexts") {
+					lib.Printf("%s: trying to create too many scrolls, sleeping for 10s\n", pattern)
+					time.Sleep(10)
+					continue
+				}
+				return
+			}
+			if status != 200 {
+				s := ""
+				if scroll != nil {
+					s = *scroll
+				}
+				err = fmt.Errorf("%s: scroll %s got %d status", pattern, s, status)
+				return
+			}
+			var result map[string]interface{}
+			err = jsoniter.Unmarshal(body, &result)
+			if err != nil {
+				lib.Printf("unmarshal error: %+v for %s url: %s\n", err, method, rurl)
+				return
+			}
+			sScroll, ok := result["_scroll_id"].(string)
+			if !ok {
+				err = fmt.Errorf("missing _scroll_id in the response")
+				return
+			}
+			scroll = &sScroll
+			items, ok := result["hits"].(map[string]interface{})["hits"].([]interface{})
+			if !ok {
+				err = fmt.Errorf("Missing hits.hits in the response %+v", result)
+				return
+			}
+			nItems := len(items)
+			if nItems == 0 {
+				lib.Printf("%s finished %d items\n", pattern, allItems)
+				break
+			}
+			for i, item := range items {
+				doc, _ := item.(map[string]interface{})["_source"].(map[string]interface{})
+				uuid, _ := doc["uuid"].(string)
+				uuidsCurrent[uuid] = doc
+				lib.Printf("%d/%d: %s:%d\n", i, nItems, uuid, len(doc))
+			}
+			allItems += nItems
+			lib.Printf("%s processed %d items (%d so far)\n", pattern, nItems, allItems)
+		}
+		err = nil
+		return
+	}
+	for i := 0; i < nPacks; i++ {
+		e := fetchCurrent(i)
+		if e != nil {
+			lib.Printf("%s: fetching current data: %+v\n", pattern, e)
+		}
+	}
+	lib.Printf("found %d/%d current uuids values\n", len(uuidsCurrent), nUUIDs)
+	return
+}
+
+func insertToES(ch chan error, ctx *lib.Ctx, items []map[string]interface{}) (err error) {
 	// TODO: connect s3 retry mechanism
+	if ch != nil {
+		defer func() {
+			ch <- err
+		}()
+	}
 	nItems := len(items)
-	lib.Printf("bulk uploading %d documents\n", nItems)
+	lib.Printf("bulk uploading %d documents (insert)\n", nItems)
 	url := ctx.ESURL + "/_bulk?refresh=wait_for"
 	payloads := []byte{}
 	newLine := []byte("\n")
@@ -1235,7 +1460,7 @@ func uploadRichItems(ctx *lib.Ctx, async bool) {
 	if nItems == 0 {
 		return
 	}
-	items := []map[string]interface{}{}
+	items := [][]map[string]interface{}{}
 	for _, item := range gRichItems {
 		items = append(items, item)
 	}
@@ -1260,7 +1485,7 @@ func uploadRichItems(ctx *lib.Ctx, async bool) {
 			lib.Printf("uploadToES: %+v\n", err)
 		}
 	}
-	gRichItems = map[string]map[string]interface{}{}
+	gRichItems = map[string][]map[string]interface{}{}
 }
 
 func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
@@ -1270,7 +1495,14 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 			gRichMtx.Unlock()
 		}()
 	}
-	gRichItems[rich["uuid"].(string)] = rich
+	uuid, _ := rich["uuid"].(string)
+	riches, ok := gRichItems[uuid]
+	if !ok {
+		gRichItems[uuid] = []map[string]interface{}{rich}
+	} else {
+		riches = append(riches, rich)
+		gRichItems[uuid] = riches
+	}
 	nRichItems := len(gRichItems)
 	if nRichItems < ctx.ESBulkSize {
 		if ctx.Debug > 2 {
