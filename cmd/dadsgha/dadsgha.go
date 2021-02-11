@@ -2202,10 +2202,14 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		for prop, value := range affsItems {
 			setAffsObjectProp(rich, prop, value)
 		}
+		ks := make(map[string]struct{})
 		for k := range rich {
 			if strings.HasPrefix(k, "assignees_data:") {
-				delete(rich, k)
+				ks[k] = struct{}{}
 			}
+		}
+		for k := range ks {
+			delete(rich, k)
 		}
 		for _, suff := range dads.AffsFields {
 			rich["author"+suff] = rich[authorKey+suff]
@@ -2231,7 +2235,10 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	if ev == nil {
 		oldFmt = true
 		ev = &lib.Event{
-			Payload:    lib.Payload{PullRequest: evo.Payload.PullRequest},
+			Payload: lib.Payload{
+				PullRequest: evo.Payload.PullRequest,
+				Comment:     evo.Payload.Comment,
+			},
 			GHAFxSlug:  evo.GHAFxSlug,
 			GHASuffMap: evo.GHASuffMap,
 			GHAProj:    evo.GHAProj,
@@ -2485,6 +2492,67 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	}
 	rich["requested_reviewers"] = arys[0]
 	rich["assignees"] = arys[1]
+	// ReviewComments support
+	reviewers := []string{}
+	comment := ev.Payload.Comment
+	hasReview := false
+	if comment != nil && (comment.CommitID != nil || comment.PullRequestReviewID != nil) {
+		login := comment.User.Login
+		role := "reviewer_data:0:review_user"
+		rich[role+"_login"] = login
+		userData, found, err := getGitHubUser(ctx, login)
+		if err != nil {
+			lib.Printf("Cannot get %s %s info: %+v while processing %+v\n", login, role, err, prettyPrint(ev))
+			return
+		}
+		if found {
+			// name, username, email
+			identity := [3]string{"none", login, "none"}
+			name := userData["name"]
+			email := userData["email"]
+			rich[role+"_name"] = name
+			if name != nil {
+				identity[0] = *name
+			}
+			if email != nil {
+				identity[2] = *email
+				ary := strings.Split(*email, "@")
+				if len(ary) > 1 {
+					rich[role+"_domain"] = ary[1]
+				}
+			} else {
+				rich[role+"_domain"] = nil
+			}
+			rich[role+"_org"] = userData["company"]
+			rich[role+"_location"] = userData["location"]
+			rich[role+"_geolocation"] = nil
+			addIdentity(ctx, identity)
+			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+			roles = append(roles, role)
+			reviewers = append(reviewers, login)
+			// We assume that comment is a review when it has ReviewID or CommitID and its GitHub author is found (found in GitHub, his/her affiliation scan be unknown)
+			hasReview = true
+		} else if ctx.Debug > 0 {
+			lib.Printf("warning: PR %s user %s not found\n", role, login)
+			rich[role+"_name"] = nil
+			rich[role+"_domain"] = nil
+			rich[role+"_org"] = nil
+			rich[role+"_location"] = nil
+			rich[role+"_geolocation"] = nil
+			rich[role+"_login"] = nil
+			rich[role+"_data_uuid"] = ""
+			rich[role+"_data_user_name"] = ""
+			rich[role+"_data_org_name"] = "Unknown"
+			rich[role+"_data_name"] = ""
+			rich[role+"_data_multi_org_names"] = []string{"Unknown"}
+			rich[role+"_data_id"] = ""
+			rich[role+"_data_gender_acc"] = nil
+			rich[role+"_data_gender"] = ""
+			rich[role+"_data_domain"] = ""
+			rich[role+"_data_bot"] = false
+		}
+	}
+	rich["reviewers"] = reviewers
 	rich["id_in_repo"] = pr.Number
 	rich["title"] = pr.Title
 	rich["title_analyzed"] = pr.Title
@@ -2601,12 +2669,21 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		for prop, value := range affsItems {
 			setAffsObjectProp(rich, prop, value)
 		}
+		ks := make(map[string]struct{})
 		for k := range rich {
+			if strings.HasPrefix(k, "reviewer_data:") {
+				ks[k] = struct{}{}
+				continue
+			}
 			for _, pref := range rols {
 				if strings.HasPrefix(k, pref[0]+":") {
-					delete(rich, k)
+					ks[k] = struct{}{}
+					continue
 				}
 			}
+		}
+		for k := range ks {
+			delete(rich, k)
 		}
 		for _, suff := range dads.AffsFields {
 			rich["author"+suff] = rich[authorKey+suff]
@@ -2617,6 +2694,24 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			rich[orgsKey] = []interface{}{}
 		}
 		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
+	}
+	// Extra data from comment field
+	if hasReview {
+		rd, _ := rich["reviewer_data"]
+		m, _ := rd.([]interface{})[0].(map[string]interface{})
+		// "review_state" : "CHANGES_REQUESTED",
+		// "review_html_url" : "https://github.com/code-sleuth/gh-pr-reviewers/pull/1#pullrequestreview-545410679",
+		m["review_id"] = comment.ID
+		m["review_comment"] = comment.Body
+		m["review_commit_id"] = comment.CommitID
+		m["review_original_commit_id"] = comment.OriginalCommitID
+		m["review_comment"] = comment.Body
+		m["review_submitted_at"] = comment.CreatedAt
+		m["review_pull_request_review_id"] = comment.PullRequestReviewID
+		m["review_line"] = comment.Line
+		m["review_path"] = comment.Path
+		m["review_position"] = comment.Position
+		m["review_original_position"] = comment.OriginalPosition
 	}
 	addRichItem(ctx, rich)
 	processed = true
@@ -2657,7 +2752,6 @@ func setAffsObjectProp(rich map[string]interface{}, prop string, value interface
 	}
 	iAry[idx].(map[string]interface{})[prp] = value
 	rich[obj] = iAry
-	//delete(rich, prop)
 	// fmt.Printf("'%s':'%v' added %v\n", prop, value, rich[obj].([]interface{})[idx].(map[string]interface{})[prp])
 }
 
