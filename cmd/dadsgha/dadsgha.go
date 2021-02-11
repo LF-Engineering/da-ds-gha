@@ -1551,7 +1551,7 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 	}
 	if !ers {
 		gDocsUploaded += int64(nItems)
-		lib.Printf("bulk uploaded %d documents\n", nItems)
+		lib.Printf("bulk uploaded %d documents (insert: %v)\n", nItems, insert)
 		e := markSyncDates(ctx, items)
 		if e != nil {
 			lib.Printf("Error marking sync dates for %d items: %v\n", len(items), e)
@@ -1687,7 +1687,7 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 		}
 		uploadedItems = append(uploadedItems, item)
 	}
-	lib.Printf("uploaded %d/%d documents, failed %d (in one by one fallback)\n", uploaded, nItems, notUploaded)
+	lib.Printf("uploaded %d/%d documents, failed %d (in one by one fallback, insert: %v)\n", uploaded, nItems, notUploaded, insert)
 	gDocsUploaded += int64(uploaded)
 	e := markSyncDates(ctx, uploadedItems)
 	if e != nil {
