@@ -1751,7 +1751,10 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 		riches = append(riches, rich)
 		gRichItems[uuid] = riches
 	}
-	nRichItems := len(gRichItems)
+	nRichItems := 0
+	for _, riches := range gRichItems {
+		nRichItems += len(riches)
+	}
 	if nRichItems < ctx.ESBulkSize {
 		if ctx.Debug > 2 {
 			lib.Printf("Pending items: %d\n", nRichItems)
