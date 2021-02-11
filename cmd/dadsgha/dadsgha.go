@@ -1249,9 +1249,9 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 	for uuid, updates := range uuidsUpdates {
 		data, ok := uuidsCurrent[uuid]
 		if ok {
-			data = mergeIssuePRData(data, uuidsUpdates[uuid][0])
+			data = mergeIssuePRData(data, updates[0])
 		} else {
-			data = uuidsUpdates[uuid][0]
+			data = updates[0]
 		}
 		for _, update := range updates[1:] {
 			data = mergeIssuePRData(data, update)
@@ -1264,6 +1264,24 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 
 func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) {
 	res = make(map[string]interface{})
+	i2sa := func(i interface{}) (sa []string, ok bool) {
+		sa, ok = i.([]string)
+		if ok {
+			return
+		}
+		ia, ok := i.([]interface{})
+		if !ok {
+			return
+		}
+		for _, it := range ia {
+			si, o := it.(string)
+			if o {
+				sa = append(sa, si)
+			}
+		}
+		ok = true
+		return
+	}
 	mergeValues := func(k string, va, vb interface{}) (v interface{}) {
 		defer func() {
 			if strings.Contains(k, "labels") {
@@ -1271,37 +1289,25 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 			}
 		}()
 		switch k {
-		case "comments", "issue_comments", "pr_comments", "issue_time_to_close_days", "pr_time_to_close_days", "time_to_close_days", "issue_time_open_days", "pr_time_open_days", "time_open_days",
-			"title", "title_analyzed", "num_review_comments", "commits", "additions", "deletions", "changed_files", "forks", "code_merge_duration":
-			// B unless null
-			if vb == nil {
-				v = va
-			} else {
-				v = vb
-			}
 		case "labels":
-			vaa, oka := va.([]interface{})
-			vba, okb := vb.([]interface{})
+			vba, okb := i2sa(vb)
 			if okb && len(vba) > 0 {
 				v = vb
 			} else {
 				v = va
 			}
-			if oka && okb && len(vaa) > 0 && len(vba) > 0 {
-				fmt.Printf("LABELS: %s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
-			}
 		case "all_labels":
-			vaa, oka := va.([]interface{})
-			vba, okb := vb.([]interface{})
+			vaa, oka := i2sa(va)
+			vba, okb := i2sa(vb)
 			labels := make(map[string]struct{})
 			if oka {
 				for _, it := range vaa {
-					labels[it.(string)] = struct{}{}
+					labels[it] = struct{}{}
 				}
 			}
 			if okb {
 				for _, it := range vba {
-					labels[it.(string)] = struct{}{}
+					labels[it] = struct{}{}
 				}
 			}
 			ary := []string{}
@@ -1309,8 +1315,16 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				ary = append(ary, label)
 			}
 			v = ary
-			if oka && okb && len(vaa) > 0 && len(vba) > 0 {
+			if oka && okb && len(vaa) > 0 && len(vba) > 0 && len(ary) > len(vaa) && len(ary) > len(vba) {
 				fmt.Printf("ALL_LABELS: %s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
+			}
+		case "comments", "issue_comments", "pr_comments", "issue_time_to_close_days", "pr_time_to_close_days", "time_to_close_days", "issue_time_open_days", "pr_time_open_days", "time_open_days",
+			"title", "title_analyzed", "num_review_comments", "commits", "additions", "deletions", "changed_files", "forks", "code_merge_duration":
+			// B unless null
+			if vb == nil {
+				v = va
+			} else {
+				v = vb
 			}
 		default:
 			// Always prefer B (newer value), so it can update to null
