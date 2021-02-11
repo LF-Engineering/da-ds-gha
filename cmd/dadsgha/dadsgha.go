@@ -1489,7 +1489,7 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 		op = "update"
 		fop = "_update"
 		fmethod = "POST"
-		ups1 = []byte(`{"doc_as_upsertx":true,"doc":`)
+		ups1 = []byte(`{"doc_as_upsert":true,"doc":`)
 		ups2 = []byte(`}`)
 	}
 	defer func() { runGC() }()
