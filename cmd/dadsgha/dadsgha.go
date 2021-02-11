@@ -1282,11 +1282,27 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 		ok = true
 		return
 	}
+	i2ma := func(i interface{}) (ma []map[string]interface{}, ok bool) {
+		ma, ok = i.([]map[string]interface{})
+		if ok {
+			return
+		}
+		ia, ok := i.([]interface{})
+		if !ok {
+			return
+		}
+		for _, it := range ia {
+			mi, o := it.(map[string]interface{})
+			if o {
+				ma = append(ma, mi)
+			}
+		}
+		ok = true
+		return
+	}
 	mergeValues := func(k string, va, vb interface{}) (v interface{}) {
 		defer func() {
-			if strings.Contains(k, "labels") {
-				lib.Printf("%s: (%v,%T) <-> (%v,%T) -> (%v,%T)\n", k, printObj(va), va, printObj(vb), vb, printObj(v), v)
-			}
+			lib.Printf("%s: (%v,%T) <-> (%v,%T) -> (%v,%T)\n", k, printObj(va), va, printObj(vb), vb, printObj(v), v)
 		}()
 		switch k {
 		case "labels":
@@ -1315,8 +1331,59 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				ary = append(ary, label)
 			}
 			v = ary
+		case "assignees_data", "requested_reviewers_data", "reviewer_data":
+			vba, okb := i2ma(vb)
+			if okb && len(vba) > 0 {
+				fmt.Printf("correct %s in B\n", k)
+				v = vb
+			} else {
+				fmt.Printf("correct %s in A\n", k)
+				v = va
+			}
+		case "all_assignees_data", "all_requested_reviewers_data", "all_reviewer_data":
+			vaa, oka := i2ma(va)
+			vba, okb := i2ma(vb)
+			objs := make(map[string]map[string]interface{})
+			var objKey string
+			if k == "all_assignees_data" {
+				objKey = "assignee_id"
+			} else if k == "all_requested_reviewers_data" {
+				objKey = "requested_reviewer_id"
+			} else if k == "all_reviewer_data" {
+				// will only put unique reviewers, each with 1 comment
+				// objKey = "review_user_id"
+				// will put all unique comments (so one user can be listed more than one)
+				objKey = "review_id"
+			} else {
+				fmt.Printf("unknown key %s\n", k)
+				v = vb
+				return
+			}
+			if oka {
+				for _, it := range vaa {
+					id, ok := it[objKey].(string)
+					fmt.Printf("A %s (%s,%v)\n", k, id, ok)
+					if ok {
+						objs[id] = it
+					}
+				}
+			}
+			if okb {
+				for _, it := range vba {
+					id, ok := it[objKey].(string)
+					fmt.Printf("B %s (%s,%v)\n", k, id, ok)
+					if ok {
+						objs[id] = it
+					}
+				}
+			}
+			ary := []map[string]interface{}{}
+			for _, obj := range objs {
+				ary = append(ary, obj)
+			}
+			v = ary
 			if oka && okb && len(vaa) > 0 && len(vba) > 0 && len(ary) > len(vaa) && len(ary) > len(vba) {
-				fmt.Printf("ALL_LABELS: %s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
+				fmt.Printf("ALL_%s: (%v,%v) <-> (%v,%v) -> %v\n", k, vaa, oka, vba, okb, v)
 			}
 		case "comments", "issue_comments", "pr_comments", "issue_time_to_close_days", "pr_time_to_close_days", "time_to_close_days", "issue_time_open_days", "pr_time_open_days", "time_open_days",
 			"title", "title_analyzed", "num_review_comments", "commits", "additions", "deletions", "changed_files", "forks", "code_merge_duration":
