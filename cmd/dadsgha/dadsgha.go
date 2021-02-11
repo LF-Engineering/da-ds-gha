@@ -1047,7 +1047,9 @@ func uploadToES(ctx *lib.Ctx, data [][]map[string]interface{}) (err error) {
 	defer func() {
 		e := <-ch
 		if err == nil {
-			err = fmt.Errorf("uploadToESIternal(insert): %+v", e)
+			if e != nil {
+				err = fmt.Errorf("uploadToESIternal(insert): %+v", e)
+			}
 			return
 		}
 		if e == nil {
@@ -1467,16 +1469,29 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 	}
 	nItems := len(items)
 	lib.Printf("bulk uploading %d documents (insert: %v)\n", nItems, insert)
-	if !insert {
-		return
-	}
 	url := ctx.ESURL + "/_bulk?refresh=wait_for"
 	payloads := []byte{}
 	newLine := []byte("\n")
 	var (
-		doc []byte
-		hdr []byte
+		doc     []byte
+		hdr     []byte
+		ups1    []byte
+		ups2    []byte
+		op      string
+		fop     string
+		fmethod string
 	)
+	if insert {
+		op = "index"
+		fop = "_doc"
+		fmethod = "PUT"
+	} else {
+		op = "update"
+		fop = "_update"
+		fmethod = "POST"
+		ups1 = []byte(`{"doc_as_upsertx":true,"doc":`)
+		ups2 = []byte(`}`)
+	}
 	defer func() { runGC() }()
 	for _, item := range items {
 		doc, err = jsoniter.Marshal(item)
@@ -1493,9 +1508,15 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 			err = fmt.Errorf("missing 'index' property in %+v", prettyPrint(item))
 			return
 		}
-		hdr = []byte(`{"index":{"_index":"` + idx + `","_id":"` + id + "\"}}\n")
+		hdr = []byte(`{"` + op + `":{"_index":"` + idx + `","_id":"` + id + "\"}}\n")
 		payloads = append(payloads, hdr...)
+		if !insert {
+			payloads = append(payloads, ups1...)
+		}
 		payloads = append(payloads, doc...)
+		if !insert {
+			payloads = append(payloads, ups2...)
+		}
 		payloads = append(payloads, newLine...)
 	}
 	payloadBody := bytes.NewReader(payloads)
@@ -1547,15 +1568,15 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 				if !ok {
 					continue
 				}
-				index, ok := it["index"].(map[string]interface{})
+				opData, ok := it[op].(map[string]interface{})
 				if !ok {
 					continue
 				}
-				fStatus, ok := index["status"].(float64)
+				fStatus, ok := opData["status"].(float64)
 				if !ok {
 					continue
 				}
-				iid, ok := index["_id"].(string)
+				iid, ok := opData["_id"].(string)
 				if !ok {
 					continue
 				}
@@ -1583,14 +1604,19 @@ func uploadToESInternal(ch chan error, ctx *lib.Ctx, items []map[string]interfac
 			items = newItems
 		}
 	}
-	method = "PUT"
+	method = fmethod
 	uploadedItems := []map[string]interface{}{}
 	for _, item := range items {
 		notUploaded++
 		doc, _ = jsoniter.Marshal(item)
 		id, _ := item["uuid"].(string)
 		idx, _ := item["index"].(string)
-		url = ctx.ESURL + "/" + idx + "/_doc/" + id
+		url = ctx.ESURL + "/" + idx + "/" + fop + "/" + id
+		if !insert {
+			d := ups1
+			d = append(d, doc...)
+			doc = append(d, ups2...)
+		}
 		//lib.Printf("%s:\n%s\n", url, prettyPrint(item))
 		payloadBody := bytes.NewReader(doc)
 		req, e := http.NewRequest(method, url, payloadBody)
