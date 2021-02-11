@@ -1313,33 +1313,33 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 			}()
 		*/
 		switch k {
-		case "labels":
+		case "labels", "assignees", "requested_reviewers":
 			vba, okb := i2sa(vb)
 			if okb && len(vba) > 0 {
 				v = vb
 			} else {
 				v = va
 			}
-		case "all_labels":
+		case "all_labels", "all_assignees", "all_requested_reviewers", "reviewers":
 			vaa, oka := i2sa(va)
 			vba, okb := i2sa(vb)
-			labels := make(map[string]struct{})
+			objs := make(map[string]struct{})
 			if oka {
 				for _, it := range vaa {
-					labels[it] = struct{}{}
+					objs[it] = struct{}{}
 				}
 			}
 			if okb {
 				for _, it := range vba {
-					labels[it] = struct{}{}
+					objs[it] = struct{}{}
 				}
 			}
 			ary := []string{}
-			for label := range labels {
-				ary = append(ary, label)
+			for obj := range objs {
+				ary = append(ary, obj)
 			}
 			v = ary
-		case "assignees_data", "requested_reviewers_data", "reviewer_data":
+		case "assignees_data", "requested_reviewers_data":
 			vba, okb := i2ma(vb)
 			if okb && len(vba) > 0 {
 				v = vb
@@ -1380,7 +1380,7 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				ary = append(ary, obj)
 			}
 			v = ary
-		case "all_reviewer_data":
+		case "reviewer_data":
 			vaa, oka := i2ma(va)
 			vba, okb := i2ma(vb)
 			objs := make(map[int64]map[string]interface{})
@@ -2610,7 +2610,6 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	for _, label := range issue.Labels {
 		labels = append(labels, label.Name)
 	}
-	rich["all_labels"] = labels
 	rich["labels"] = labels
 	rich["comments"] = issue.Comments
 	rich["issue_comments"] = issue.Comments
@@ -2722,7 +2721,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		}
 		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
 	}
-	objProps := []string{"assignees_data"}
+	objProps := []string{"assignees_data", "assignees", "labels"}
 	for _, objProp := range objProps {
 		_, ok := rich[objProp]
 		if !ok {
@@ -3082,7 +3081,6 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["url_id"] = githubRepo + "/pull/" + sNumber
 	rich["pr_url"] = rich["url"]
 	rich["pr_url_id"] = rich["url_id"]
-	rich["all_labels"] = []string{}
 	rich["labels"] = []string{}
 	rich["comments"] = pr.Comments
 	rich["pr_comments"] = pr.Comments
@@ -3234,7 +3232,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		m["review_position"] = comment.Position
 		m["review_original_position"] = comment.OriginalPosition
 	}
-	objProps := []string{"assignees_data", "requested_reviewers_data", "reviewer_data"}
+	objProps := []string{"assignees_data", "assignees", "requested_reviewers_data", "requested_reviewers", "reviewer_data", "labels"}
 	for _, objProp := range objProps {
 		_, ok := rich[objProp]
 		if !ok {
