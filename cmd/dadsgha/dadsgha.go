@@ -54,9 +54,9 @@ const (
 	cMaxGitHubUsersFileCacheAge = 7776000
 	// cNDaysGHAPeriod - how many days cache in GHA map files at once
 	cNDaysGHAPeriod = 5
-	// cAllowedRepoAPIAge - when doin fork event enrichment we use GH API:
+	// cAllowedRepoAPIAge - when doing fork event enrichment we use GH API:
 	// when more than 1 fork is processed then we skip repeating the same state for 15 minutes, and after that time we invaliadte the cache
-	cAllowedRepoAPIAge = 900
+	cAllowedRepoAPIAge = 1800
 )
 
 var (
