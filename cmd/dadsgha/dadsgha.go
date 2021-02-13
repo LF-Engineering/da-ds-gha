@@ -1449,22 +1449,21 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 	if !ok {
 		at, err = lib.TimeParseES(a[dtKey].(string))
 	}
-	fmt.Printf("A: %v -> (%v,%v,%v)\n", a[dtKey], at, ok, err)
+	// fmt.Printf("A: %v -> (%v,%v,%v)\n", a[dtKey], at, ok, err)
 	if err == nil {
 		bt, ok := b[dtKey].(time.Time)
 		if !ok {
 			bt, err = lib.TimeParseES(b[dtKey].(string))
 		}
-		fmt.Printf("B: %v -> (%v,%v,%v)\n", b[dtKey], bt, ok, err)
+		// fmt.Printf("B: %v -> (%v,%v,%v)\n", b[dtKey], bt, ok, err)
 		if err == nil {
 			if at.After(bt) {
 				pa = b
 				pb = a
-				fmt.Printf("swapped a <-> b\n")
+				// fmt.Printf("swapped a <-> b\n")
 			}
 		}
 	}
-
 	for k, va := range pa {
 		vb, ok := pb[k]
 		if !ok {
