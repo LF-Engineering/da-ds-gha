@@ -1441,16 +1441,40 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 		}
 		return
 	}
-	for k, va := range a {
-		vb, ok := b[k]
+	pa := a
+	pb := b
+	dtKey := "metadata__updated_on"
+	at, ok := a[dtKey].(time.Time)
+	var err error
+	if !ok {
+		at, err = lib.TimeParseES(a[dtKey].(string))
+	}
+	fmt.Printf("A: %v -> (%v,%v,%v)\n", a[dtKey], at, ok, err)
+	if err == nil {
+		bt, ok := b[dtKey].(time.Time)
+		if !ok {
+			bt, err = lib.TimeParseES(b[dtKey].(string))
+		}
+		fmt.Printf("B: %v -> (%v,%v,%v)\n", b[dtKey], bt, ok, err)
+		if err == nil {
+			if at.After(bt) {
+				pa = b
+				pb = a
+				fmt.Printf("swapped a <-> b\n")
+			}
+		}
+	}
+
+	for k, va := range pa {
+		vb, ok := pb[k]
 		if !ok {
 			res[k] = va
 			continue
 		}
 		res[k] = mergeValues(k, va, vb)
 	}
-	for k, vb := range b {
-		va, ok := a[k]
+	for k, vb := range pb {
+		va, ok := pa[k]
 		if !ok {
 			res[k] = vb
 			continue
@@ -3232,7 +3256,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		m["review_position"] = comment.Position
 		m["review_original_position"] = comment.OriginalPosition
 	}
-	objProps := []string{"assignees_data", "assignees", "requested_reviewers_data", "requested_reviewers", "reviewer_data", "labels"}
+	objProps := []string{"assignees_data", "assignees", "requested_reviewers_data", "requested_reviewers", "labels"}
 	for _, objProp := range objProps {
 		_, ok := rich[objProp]
 		if !ok {
