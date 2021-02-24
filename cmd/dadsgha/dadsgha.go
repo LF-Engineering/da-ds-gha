@@ -2403,7 +2403,15 @@ func updatePRReviews(ctx *lib.Ctx) {
 				m["review_state"] = review.State
 				m["review_submitted_at"] = review.SubmittedAt
 				m["review_commit_id"] = review.CommitID
-				m["review_comment"] = review.Body
+				if review.Body != nil {
+					body := *review.Body
+					if len(body) > 0x10000 {
+						body = body[:0x10000]
+					}
+					m["review_comment"] = body
+				} else {
+					m["review_comment"] = nil
+				}
 				m["review_id"] = review.ID
 			}
 			if len(currReviews) > 0 {
@@ -2449,9 +2457,54 @@ func updatePRReviews(ctx *lib.Ctx) {
 			handleMergeError(mergePRReviewData(nil, nil, data, update))
 		}
 	}
-	err := uploadToESInternal(nil, ctx, upsertItems, false)
-	if err != nil {
-		lib.Printf("uploadToESInternal(reviews): %+v\n", err)
+	nElems := len(uuidsCurrent)
+	packSize = ctx.ESBulkSize
+	if packSize > 1000 {
+		packSize = 1000
+	}
+	nPacks = nElems / packSize
+	if nUUIDs%packSize != 0 {
+		nPacks++
+	}
+	lib.Printf("updatePRReviews: uploading %d PR reviews in %d packs\n", nElems, nPacks)
+	if thrN > 1 {
+		nThreads := 0
+		ch := make(chan struct{})
+		for i := 0; i < nPacks; i++ {
+			from := i * packSize
+			to := from + packSize
+			if to > nElems {
+				to = nElems
+			}
+			go func(ch chan struct{}, i, from, to int) {
+				e := uploadToESInternal(nil, ctx, upsertItems[from:to], false)
+				if e != nil {
+					lib.Printf("uploadToESInternal(%d reviews): pack %d/%d (%d-%d) %+v\n", nElems, i, nPacks, from, to, e)
+				}
+				ch <- struct{}{}
+			}(ch, i, from, to)
+			nThreads++
+			if nThreads == thrN {
+				<-ch
+				nThreads--
+			}
+		}
+		for nThreads > 0 {
+			<-ch
+			nThreads--
+		}
+	} else {
+		for i := 0; i < nPacks; i++ {
+			from := i * packSize
+			to := from + packSize
+			if to > nElems {
+				to = nElems
+			}
+			e := uploadToESInternal(nil, ctx, upsertItems[from:to], false)
+			if e != nil {
+				lib.Printf("uploadToESInternal(%d reviews): pack %d/%d (%d-%d) %+v\n", nElems, i, nPacks, from, to, e)
+			}
+		}
 	}
 	return
 }
