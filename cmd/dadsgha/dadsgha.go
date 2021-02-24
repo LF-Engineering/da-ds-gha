@@ -2162,15 +2162,240 @@ func updatePRReviews(ctx *lib.Ctx) {
 	upsertItems := []map[string]interface{}{}
 	mergePRReviewData := func(ch chan error, mtx *sync.Mutex, item map[string]interface{}, data reviewData) (err error) {
 		defer func() {
+			_, ok := item["reviewer_data"]
+			if !ok {
+				item["reviewer_data"] = []interface{}{}
+			}
+			_, ok = item["reviewers"]
+			if !ok {
+				item["reviewes"] = []string{}
+			}
 			if ch != nil {
 				ch <- err
 			}
 		}()
 		// lib.Printf("mergePRReviewData:\ndata: %s\nreview: %+v\n\n", printObj(item), data)
+		currIDs := map[int64]struct{}{}
 		currReviews, ok := item["reviewer_data"].([]interface{})
-		lib.Printf("currReviews(%v): %+v\n", ok, prettyPrint(currReviews))
+		if ok {
+			fmt.Printf("xxx: %d reviews present and %d to add\n", len(currReviews), len(data.reviews))
+			// lib.Printf("currReviews(%v): %+v\n", ok, prettyPrint(currReviews))
+			for _, iReview := range currReviews {
+				review, ok := iReview.(map[string]interface{})
+				if !ok {
+					fmt.Printf("xxx: cannot cast to map: %+v\n", review)
+					continue
+				}
+				id, ok := review["review_id"]
+				if !ok {
+					fmt.Printf("xxx: cannot get review_id: %+v\n", review)
+					continue
+				}
+				idf, ok := id.(float64)
+				if !ok {
+					continue
+				}
+				fmt.Printf("xxx: got id: %d\n", int64(idf))
+				currIDs[int64(idf)] = struct{}{}
+			}
+		}
+		identities := []map[string]interface{}{}
+		roles := []string{}
+		reviewers := []string{}
+		reviewersIndices := []int{}
+		reviewerIdx := 0
+		hasReviews := false
 		for i, review := range data.reviews {
-			lib.Printf("%d) %+v\n", i, prettyPrint(*review))
+			// lib.Printf("%d) %+v\n", i, prettyPrint(*review))
+			if review.ID == nil || review.User == nil || review.SubmittedAt == nil {
+				lib.Printf("skipping review: %+v: review (ID or User or SubmittedAt is null\n")
+				continue
+			}
+			id := *review.ID
+			_, ok := currIDs[id]
+			if ok {
+				lib.Printf("review id %d is already present on the PR\n", id)
+				continue
+			}
+			login := *review.User.Login
+			role := "reviewer_data:" + strconv.Itoa(reviewerIdx) + ":reviewer"
+			item[role+"_login"] = login
+			userData, found, e := getGitHubUser(ctx, login)
+			if e != nil {
+				lib.Printf("Cannot get %s %s info: %+v while processing review %+v\n", login, role, e, prettyPrint(review))
+				err = e
+				return
+			}
+			if found {
+				// name, username, email
+				identity := [3]string{"none", login, "none"}
+				name := userData["name"]
+				email := userData["email"]
+				item[role+"_name"] = name
+				if name != nil {
+					identity[0] = *name
+				}
+				if email != nil {
+					identity[2] = *email
+					ary := strings.Split(*email, "@")
+					if len(ary) > 1 {
+						item[role+"_domain"] = ary[1]
+					}
+				} else {
+					item[role+"_domain"] = nil
+				}
+				item[role+"_org"] = userData["company"]
+				item[role+"_location"] = userData["location"]
+				item[role+"_geolocation"] = nil
+				addIdentity(ctx, identity)
+				identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
+				roles = append(roles, role)
+				reviewers = append(reviewers, login)
+				reviewersIndices = append(reviewersIndices, i)
+				hasReviews = true
+			} else if ctx.Debug > 0 {
+				lib.Printf("warning: PR %s user %s not found\n", role, login)
+				item[role+"_name"] = nil
+				item[role+"_domain"] = nil
+				item[role+"_org"] = nil
+				item[role+"_location"] = nil
+				item[role+"_geolocation"] = nil
+				item[role+"_login"] = nil
+				item[role+"_data_uuid"] = ""
+				item[role+"_data_user_name"] = ""
+				item[role+"_data_org_name"] = "Unknown"
+				item[role+"_data_name"] = ""
+				item[role+"_data_multi_org_names"] = []string{"Unknown"}
+				item[role+"_data_id"] = ""
+				item[role+"_data_gender_acc"] = nil
+				item[role+"_data_gender"] = ""
+				item[role+"_data_domain"] = ""
+				item[role+"_data_bot"] = false
+			}
+			reviewerIdx++
+		}
+		item["reviewers"] = reviewers
+		// xxx
+		fmt.Printf("xxx: %d identities data i reviews\n", len(identities))
+		if len(identities) > 0 {
+			debugSQL := 0
+			if ctx.Debug > 0 {
+				debugSQL = 2
+			}
+			pctx := &dads.Ctx{ProjectSlug: data.fslug, DB: gDadsCtx.DB, AffiliationAPIURL: gDadsCtx.AffiliationAPIURL, Debug: ctx.Debug, DebugSQL: debugSQL}
+			authorKey := "user_data"
+			affsItems := make(map[string]interface{})
+			var (
+				affsIdentity map[string]interface{}
+				empty        bool
+				e            error
+				t            int
+				got          bool
+			)
+			for i, identity := range identities {
+				role := roles[i]
+				// IMPL
+				if 1 == 0 {
+					for {
+						dt := *data.reviews[reviewersIndices[i]].SubmittedAt
+						affsIdentity, empty, e = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+						if e != nil {
+							if t < 3 {
+								t++
+								lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", e, identity, dt, role, data.fslug, t)
+								time.Sleep(time.Duration(t) * time.Second)
+								continue
+							}
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", e, identity, dt, role, data.fslug)
+							break
+						}
+						got = true
+						break
+					}
+					if !got {
+						err = e
+						return
+					}
+				}
+				affsIdentity = map[string]interface{}{}
+				empty = true
+				// IMPL
+				if empty {
+					email, _ := identity["email"].(string)
+					name, _ := identity["name"].(string)
+					username, _ := identity["username"].(string)
+					id := dads.UUIDAffs(pctx, "github", email, name, username)
+					if id == "" {
+						lib.Printf("error: mergePRReviewData: failed to generate uuid for role %s (%s,github,%s,%s)\n", role, email, name, username)
+					}
+					if ctx.Debug > 0 {
+						lib.Printf("no PR identity affiliation data for %s identity %+v -> pending %s\n", role, identity, id)
+					}
+					if name == "none" {
+						name = ""
+					}
+					if username == "none" {
+						username = ""
+					}
+					affsIdentity[role+"_id"] = id
+					affsIdentity[role+"_uuid"] = id
+					affsIdentity[role+"_name"] = name
+					affsIdentity[role+"_user_name"] = username
+					affsIdentity[role+"_domain"] = dads.IdentityAffsDomain(identity)
+					affsIdentity[role+"_gender"] = dads.Unknown
+					affsIdentity[role+"_gender_acc"] = nil
+					affsIdentity[role+"_org_name"] = dads.Unknown
+					affsIdentity[role+"_bot"] = false
+					affsIdentity[role+dads.MultiOrgNames] = []interface{}{dads.Unknown}
+				}
+				for prop, value := range affsIdentity {
+					affsItems[prop] = value
+				}
+				for _, suff := range dads.RequiredAffsFields {
+					k := role + suff
+					_, ok := affsIdentity[k]
+					if !ok {
+						affsIdentity[k] = dads.Unknown
+					}
+				}
+			}
+			for prop, value := range affsItems {
+				setAffsObjectProp(item, prop, value)
+			}
+			ks := make(map[string]struct{})
+			for k := range item {
+				if strings.HasPrefix(k, "reviewer_data:") {
+					ks[k] = struct{}{}
+					continue
+				}
+			}
+			for k := range ks {
+				delete(item, k)
+			}
+			for _, suff := range dads.AffsFields {
+				item["author"+suff] = item[authorKey+suff]
+			}
+			orgsKey := authorKey + dads.MultiOrgNames
+			_, ok = item[orgsKey]
+			if !ok {
+				item[orgsKey] = []interface{}{}
+			}
+			item["author"+dads.MultiOrgNames] = item[orgsKey]
+		}
+		// xxx
+		if hasReviews {
+			rd, _ := item["reviewer_data"]
+			for i, ri := range reviewersIndices {
+				fmt.Printf("xxx: postprocess review data %d -> %d\n", i, ri)
+				m, _ := rd.([]interface{})[i].(map[string]interface{})
+				review := data.reviews[ri]
+				m["review_author_association"] = review.AuthorAssociation
+				m["review_state"] = review.State
+				m["review_submitted_at"] = review.SubmittedAt
+				m["review_commit_id"] = review.CommitID
+				m["review_comment"] = review.Body
+				m["review_id"] = review.ID
+			}
 		}
 		if mtx != nil {
 			mtx.Lock()
@@ -3450,8 +3675,9 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	}
 	rich["requested_reviewers"] = arys[0]
 	rich["assignees"] = arys[1]
-	// ReviewComments support
+	// Comments support
 	commenters := []string{}
+	rich["commenters_data"] = []interface{}{}
 	comment := ev.Payload.Comment
 	hasComment := false
 	if comment != nil && (comment.CommitID != nil || comment.PullRequestReviewID != nil) {
