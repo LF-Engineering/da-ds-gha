@@ -8,30 +8,31 @@ import (
 
 // Ctx - environment context packed in structure
 type Ctx struct {
-	Debug             int      // From GHA_DEBUG Debug level: 0-no, 1-info, 2-verbose
-	CmdDebug          int      // From GHA_CMDDEBUG Commands execution Debug level: 0-no, 1-only output commands, 2-output commands and their output, 3-output full environment as well, default 0
-	ST                bool     // From GHA_ST true: use single threaded version, false: use multi threaded version, default false
-	NCPUs             int      // From GHA_NCPUS, set to override number of CPUs to run, this overwrites GHA_ST, default 0 (which means do not use it, use all CPU reported by go library)
-	NCPUsScale        float64  // From GHA_NCPUS_SCALE, scale number of CPUs, for example 2.0 will report number of cpus 2.0 the number of actually available CPUs
-	ExecFatal         bool     // default true, set this manually to false to avoid lib.ExecCommand calling os.Exit() on failure and return error instead
-	ExecQuiet         bool     // default false, set this manually to true to have quiet exec failures
-	ExecOutput        bool     // default false, set to true to capture commands STDOUT
-	ExecOutputStderr  bool     // default false, set to true to capture commands STDOUT
-	GitHubOAuth       string   // From GHA_GITHUB_OAUTH, if not set it attempts to use public access, if contains "/" it will assume that it contains file name, if "," found then it will assume that this is a list of OAuth tokens instead of just one
-	ESURL             string   // From GHA_ES_URL - ElasticSearch URL
-	ESBulkSize        int      // From GHA_ES_BULK_SIZE, bulk upload size, default 1000
-	LoadConfig        bool     // From GHA_LOAD_CONFIG, if set - it will load configuration instead of reading all fixtures
-	SaveConfig        bool     // From GHA_SAVE_CONFIG, if set - it will save configuration in a JSON file
-	NoIncremental     bool     // From GHA_NO_INCREMENTAL, if set - it will not attempt to detect fixture changes since last run and will treat all fixtures as new and detect the start date everywhere
-	NoGHAMap          bool     // From GHA_NO_GHA_MAP, if set - it will not use any GHA map files (which are very memory consuming)
-	NoGHARepoDates    bool     // From GHA_NO_GHA_REPO_DATES, if set, it will skip GHA repo dates processing (file is huge, requires around 30G of memory), GHA map files can still be processed
-	ConfigFile        string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config/" (gha_config/fixtures.json, gha_config/dates.json, gha_config/repos.json)
-	GapURL            string   // From GHA_GAP_URL, address of the GAP API
-	MaxParallelSHAs   int      // From GHA_MAX_PARALLEL_SHAS, maximum number of GHA repo dates SHA files to process in parallel, setting to 0 means unlimited (basically NCPUS)
-	MaxJSONsBytes     int64    // From GHA_MAX_JSONS_GBYTES, when processing multiple GHA hours in parallel, single hour uncompressed can even be 800M, when you have say 64 CPUs then you can reserve 50+ G, so you can specify limit in Gb, default is 0 = no limit
-	MemHeartBeatBytes int64    // From GHA_MEM_HEARTBEAT_GBYTES, display memory hearbeat warning when exceeding this limit (heartbeat happens every 15s), default is 0 - not to display any warnings.
-	TestMode          bool     // True when running tests
-	OAuthKeys         []string // GitHub oauth keys recevide from GHA_GITHUB_OAUTH configuration (initialized only when lib.GHClient() is called)
+	Debug                 int      // From GHA_DEBUG Debug level: 0-no, 1-info, 2-verbose
+	CmdDebug              int      // From GHA_CMDDEBUG Commands execution Debug level: 0-no, 1-only output commands, 2-output commands and their output, 3-output full environment as well, default 0
+	ST                    bool     // From GHA_ST true: use single threaded version, false: use multi threaded version, default false
+	NCPUs                 int      // From GHA_NCPUS, set to override number of CPUs to run, this overwrites GHA_ST, default 0 (which means do not use it, use all CPU reported by go library)
+	NCPUsScale            float64  // From GHA_NCPUS_SCALE, scale number of CPUs, for example 2.0 will report number of cpus 2.0 the number of actually available CPUs
+	ExecFatal             bool     // default true, set this manually to false to avoid lib.ExecCommand calling os.Exit() on failure and return error instead
+	ExecQuiet             bool     // default false, set this manually to true to have quiet exec failures
+	ExecOutput            bool     // default false, set to true to capture commands STDOUT
+	ExecOutputStderr      bool     // default false, set to true to capture commands STDOUT
+	GitHubOAuth           string   // From GHA_GITHUB_OAUTH, if not set it attempts to use public access, if contains "/" it will assume that it contains file name, if "," found then it will assume that this is a list of OAuth tokens instead of just one
+	ESURL                 string   // From GHA_ES_URL - ElasticSearch URL
+	ESBulkSize            int      // From GHA_ES_BULK_SIZE, bulk upload size, default 1000
+	LoadConfig            bool     // From GHA_LOAD_CONFIG, if set - it will load configuration instead of reading all fixtures
+	SaveConfig            bool     // From GHA_SAVE_CONFIG, if set - it will save configuration in a JSON file
+	NoIncremental         bool     // From GHA_NO_INCREMENTAL, if set - it will not attempt to detect fixture changes since last run and will treat all fixtures as new and detect the start date everywhere
+	NoGHAMap              bool     // From GHA_NO_GHA_MAP, if set - it will not use any GHA map files (which are very memory consuming)
+	NoGHARepoDates        bool     // From GHA_NO_GHA_REPO_DATES, if set, it will skip GHA repo dates processing (file is huge, requires around 30G of memory), GHA map files can still be processed
+	ConfigFile            string   // From GHA_CONFIG_FILE, configuration save/load file (root name), default "gha_config/" (gha_config/fixtures.json, gha_config/dates.json, gha_config/repos.json)
+	GapURL                string   // From GHA_GAP_URL, address of the GAP API
+	MaxParallelSHAs       int      // From GHA_MAX_PARALLEL_SHAS, maximum number of GHA repo dates SHA files to process in parallel, setting to 0 means unlimited (basically NCPUS)
+	MaxParallelAPIReviews int      // From GHA_MAX_PARALLEL_API_REVIEWS, maximum number of GitHub PR Reviews API calls, setting to 0 means unlimited (basically NCPUS)
+	MaxJSONsBytes         int64    // From GHA_MAX_JSONS_GBYTES, when processing multiple GHA hours in parallel, single hour uncompressed can even be 800M, when you have say 64 CPUs then you can reserve 50+ G, so you can specify limit in Gb, default is 0 = no limit
+	MemHeartBeatBytes     int64    // From GHA_MEM_HEARTBEAT_GBYTES, display memory hearbeat warning when exceeding this limit (heartbeat happens every 15s), default is 0 - not to display any warnings.
+	TestMode              bool     // True when running tests
+	OAuthKeys             []string // GitHub oauth keys recevide from GHA_GITHUB_OAUTH configuration (initialized only when lib.GHClient() is called)
 }
 
 // Init - get context from environment variables
@@ -124,6 +125,14 @@ func (ctx *Ctx) Init() {
 		FatalOnError(err)
 		if maxParallelSHAs > 0 {
 			ctx.MaxParallelSHAs = maxParallelSHAs
+		}
+	}
+	// Max parallel GitHub API Reviews
+	if os.Getenv("GHA_MAX_PARALLEL_API_REVIEWS") != "" {
+		maxParallelAPIReviews, err := strconv.Atoi(os.Getenv("GHA_MAX_PARALLEL_API_REVIEWS"))
+		FatalOnError(err)
+		if maxParallelAPIReviews > 0 {
+			ctx.MaxParallelAPIReviews = maxParallelAPIReviews
 		}
 	}
 	// Max JSONs bytes

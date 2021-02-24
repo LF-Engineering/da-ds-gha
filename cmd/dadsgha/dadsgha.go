@@ -96,7 +96,7 @@ var (
 	gGitHubDS           = &dads.DSStub{DS: "github"}
 	gSyncDates          = map[string]map[string]time.Time{}
 	gSyncAllDates       = map[string]map[string]time.Time{}
-	gPRs                = map[string]string{}
+	gPRs                = map[[4]string]struct{}{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -304,6 +304,7 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 				gGitHubMtx.Lock()
 			}
 			gHint, _ = handleRate(ctx)
+			c = gc[gHint]
 			if gGitHubMtx != nil {
 				gGitHubMtx.Unlock()
 			}
@@ -1795,6 +1796,152 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 	uploadRichItems(ctx, true)
 }
 
+func updatePRReviews(ctx *lib.Ctx) {
+	// gPRs keys: [4]string{idx, githubRepo, prNumber, uuid}
+	if len(gPRs) == 0 {
+		return
+	}
+	lib.Printf("Hybrid processing %d PR reviews\n", len(gPRs))
+	var c *github.Client
+	if gGitHubMtx != nil {
+		gGitHubMtx.RLock()
+	}
+	if !gInit || gHint < 0 {
+		if ctx.Debug > 0 {
+			lib.Printf("updatePRReviews: init\n")
+		}
+		if gGitHubMtx != nil {
+			gGitHubMtx.RUnlock()
+			gGitHubMtx.Lock()
+		}
+		if !gInit {
+			gctx, gc = lib.GHClient(ctx)
+			gInit = true
+		}
+		gHint, _ = handleRate(ctx)
+		c = gc[gHint]
+		if gGitHubMtx != nil {
+			gGitHubMtx.Unlock()
+		}
+	} else {
+		c = gc[gHint]
+		if gGitHubMtx != nil {
+			gGitHubMtx.RUnlock()
+		}
+		if ctx.Debug > 0 {
+			lib.Printf("updatePRReviews: reuse\n")
+		}
+	}
+	opt := &github.ListOptions{PerPage: 100}
+	type reviewData struct {
+		idx     string
+		uuid    string
+		reviews []*github.PullRequestReview
+		err     error
+	}
+	getReviewParams := func(data [4]string) (string, string, string, int) {
+		ary := strings.Split(data[1], "/")
+		number, _ := strconv.Atoi(data[2])
+		return "/repos/" + data[1] + "/pulls/" + data[2] + "/reviews", ary[0], ary[1], number
+	}
+	getReviews := func(ch chan reviewData, data [4]string) (result reviewData) {
+		var err error
+		url, owner, repo, number := getReviewParams(data)
+		defer func() {
+			result.err = err
+			// lib.Printf("get reviews for %s(%d/%v) -> %+v\n", url, len(result.reviews), result.err, result)
+			if ch != nil {
+				ch <- result
+			}
+		}()
+		result.idx = data[0]
+		result.uuid = data[3]
+		// lib.Printf("get reviews for %s: %+v\n", url, result)
+		retry := false
+		for {
+			var (
+				reviews  []*github.PullRequestReview
+				response *github.Response
+				e        error
+			)
+			// func (s *PullRequestsService) ListReviews(ctx context.Context, owner, repo string, number int, opts *ListOptions) ([]*PullRequestReview, *Response, error)
+			reviews, response, e = c.PullRequests.ListReviews(gctx, owner, repo, number, opt)
+			if e != nil && !retry {
+				lib.Printf("Error getting %s reviews: response: %+v, error: %+v, retrying rate\n", url, response, e)
+				lib.Printf("updatePRReviews: handle rate\n")
+				abuse := isAbuse(err)
+				if abuse {
+					sleepFor := 30 + rand.Intn(30)
+					lib.Printf("GitHub detected abuse (get reviews %s), waiting for %ds\n", url, sleepFor)
+					time.Sleep(time.Duration(sleepFor) * time.Second)
+				}
+				if gGitHubMtx != nil {
+					gGitHubMtx.Lock()
+				}
+				gHint, _ = handleRate(ctx)
+				c = gc[gHint]
+				if gGitHubMtx != nil {
+					gGitHubMtx.Unlock()
+				}
+				if !abuse {
+					retry = true
+				}
+				continue
+			}
+			if e != nil {
+				err = e
+				return
+			}
+			for _, review := range reviews {
+				result.reviews = append(result.reviews, review)
+			}
+			if response.NextPage == 0 {
+				break
+			}
+			opt.Page = response.NextPage
+			retry = false
+		}
+		return
+	}
+	reviews := map[string]reviewData{}
+	addReviewData := func(review reviewData) {
+		if review.err != nil {
+			lib.Printf("Failed to get review data: %+v, review: %+v\n", review.err, review)
+			return
+		}
+		if len(review.reviews) > 0 {
+			reviews[review.uuid] = review
+		}
+	}
+	thrN := gThrN
+	if ctx.MaxParallelAPIReviews > 0 && thrN > ctx.MaxParallelAPIReviews {
+		thrN = ctx.MaxParallelAPIReviews
+	}
+	if thrN > 1 {
+		nThreads := 0
+		ch := make(chan reviewData)
+		for data := range gPRs {
+			go getReviews(ch, data)
+			nThreads++
+			if nThreads == thrN {
+				addReviewData(<-ch)
+				nThreads--
+			}
+		}
+		for nThreads > 0 {
+			addReviewData(<-ch)
+			nThreads--
+		}
+	} else {
+		for data := range gPRs {
+			addReviewData(getReviews(nil, data))
+		}
+	}
+	lib.Printf("Got reviews data on %d PRs\n", len(reviews))
+	lib.Printf("Hybrid processed %d PR reviews\n", len(gPRs))
+	// xxx
+}
+
 func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
 	if ctx.Debug > 0 {
 		lib.Printf("bulk uploading %d identities\n", len(items))
@@ -2263,6 +2410,7 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 				gGitHubMtx.Lock()
 			}
 			gHint, _ = handleRate(ctx)
+			c = gc[gHint]
 			if gGitHubMtx != nil {
 				gGitHubMtx.Unlock()
 			}
@@ -2667,24 +2815,30 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		)
 		for i, identity := range identities {
 			role := roles[i]
-			for {
-				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-				if err != nil {
-					if t < 3 {
-						t++
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
-						time.Sleep(time.Duration(t) * time.Second)
-						continue
+			// IMPL
+			if 1 == 0 {
+				for {
+					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+					if err != nil {
+						if t < 3 {
+							t++
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+							time.Sleep(time.Duration(t) * time.Second)
+							continue
+						}
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+						break
 					}
-					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+					got = true
 					break
 				}
-				got = true
-				break
+				if !got {
+					return
+				}
 			}
-			if !got {
-				return
-			}
+			affsIdentity = map[string]interface{}{}
+			empty = true
+			// IMPL
 			if empty {
 				email, _ := identity["email"].(string)
 				name, _ := identity["name"].(string)
@@ -3153,24 +3307,30 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		)
 		for i, identity := range identities {
 			role := roles[i]
-			for {
-				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-				if err != nil {
-					if t < 3 {
-						t++
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
-						time.Sleep(time.Duration(t) * time.Second)
-						continue
+			// IMPL
+			if 1 == 0 {
+				for {
+					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+					if err != nil {
+						if t < 3 {
+							t++
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+							time.Sleep(time.Duration(t) * time.Second)
+							continue
+						}
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+						break
 					}
-					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+					got = true
 					break
 				}
-				got = true
-				break
+				if !got {
+					return
+				}
 			}
-			if !got {
-				return
-			}
+			affsIdentity = map[string]interface{}{}
+			empty = true
+			// IMPL
 			if empty {
 				email, _ := identity["email"].(string)
 				name, _ := identity["name"].(string)
@@ -3265,11 +3425,11 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		}
 		rich["all_"+objProp] = rich[objProp]
 	}
-	prKey := githubRepo + "/pulls/" + prNumber
+	prKey := [4]string{idx, githubRepo, prNumber, uuid}
 	if gPRsMtx != nil {
 		gPRsMtx.Lock()
 	}
-	gPRs[prKey] = uuid
+	gPRs[prKey] = struct{}{}
 	if gPRsMtx != nil {
 		gPRsMtx.Unlock()
 	}
@@ -4186,6 +4346,7 @@ func gha(ctx *lib.Ctx, incremental bool, config map[[2]string]*regexp.Regexp, al
 	defer func() {
 		uploadIdentities(ctx, &gDadsCtx, false)
 		uploadRichItems(ctx, false)
+		updatePRReviews(ctx)
 		enchanceStartDates(ctx, startDates, false)
 	}()
 
