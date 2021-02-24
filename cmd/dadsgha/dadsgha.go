@@ -2157,7 +2157,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 			handleFetchError(fetchCurrent(nil, nil, i))
 		}
 	}
-	lib.Printf("found %d/%d current uuids values\n", len(uuidsCurrent), nUUIDs)
+	lib.Printf("found %d/%d current reviews uuids values\n", len(uuidsCurrent), nUUIDs)
 	handleMergeError := func(e error) {
 		if e != nil {
 			lib.Printf("merging PR reviews data: %+v\n", e)
