@@ -2168,7 +2168,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 			}
 			_, ok = item["reviewers"]
 			if !ok {
-				item["reviewes"] = []string{}
+				item["reviewers"] = []string{}
 			}
 			if ch != nil {
 				ch <- err
@@ -2178,30 +2178,29 @@ func updatePRReviews(ctx *lib.Ctx) {
 		currIDs := map[int64]struct{}{}
 		currReviews, ok := item["reviewer_data"].([]interface{})
 		if ok {
-			fmt.Printf("xxx: %d reviews present and %d to add\n", len(currReviews), len(data.reviews))
 			// lib.Printf("currReviews(%v): %+v\n", ok, prettyPrint(currReviews))
 			for _, iReview := range currReviews {
 				review, ok := iReview.(map[string]interface{})
 				if !ok {
-					fmt.Printf("xxx: cannot cast to map: %+v\n", review)
+					lib.Printf("cannot cast to map: %+v\n", review)
 					continue
 				}
 				id, ok := review["review_id"]
 				if !ok {
-					fmt.Printf("xxx: cannot get review_id: %+v\n", review)
+					lib.Printf("cannot get review_id: %+v\n", review)
 					continue
 				}
 				idf, ok := id.(float64)
 				if !ok {
 					continue
 				}
-				fmt.Printf("xxx: got id: %d\n", int64(idf))
 				currIDs[int64(idf)] = struct{}{}
 			}
 		}
 		identities := []map[string]interface{}{}
 		roles := []string{}
 		reviewers := []string{}
+		reviewersMap := map[string]struct{}{}
 		reviewersIndices := []int{}
 		reviewerIdx := 0
 		hasReviews := false
@@ -2214,7 +2213,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 			id := *review.ID
 			_, ok := currIDs[id]
 			if ok {
-				lib.Printf("review id %d is already present on the PR\n", id)
+				// lib.Printf("review id %d is already present on the PR\n", id)
 				continue
 			}
 			login := *review.User.Login
@@ -2250,7 +2249,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 				addIdentity(ctx, identity)
 				identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 				roles = append(roles, role)
-				reviewers = append(reviewers, login)
+				reviewersMap[login] = struct{}{}
 				reviewersIndices = append(reviewersIndices, i)
 				hasReviews = true
 			} else if ctx.Debug > 0 {
@@ -2274,9 +2273,16 @@ func updatePRReviews(ctx *lib.Ctx) {
 			}
 			reviewerIdx++
 		}
+		currA, ok := item["reviewers"].([]interface{})
+		if ok {
+			for _, iReviewer := range currA {
+				reviewersMap[iReviewer.(string)] = struct{}{}
+			}
+		}
+		for reviewer := range reviewersMap {
+			reviewers = append(reviewers, reviewer)
+		}
 		item["reviewers"] = reviewers
-		// xxx
-		fmt.Printf("xxx: %d identities data i reviews\n", len(identities))
 		if len(identities) > 0 {
 			debugSQL := 0
 			if ctx.Debug > 0 {
@@ -2294,32 +2300,26 @@ func updatePRReviews(ctx *lib.Ctx) {
 			)
 			for i, identity := range identities {
 				role := roles[i]
-				// IMPL
-				if 1 == 0 {
-					for {
-						dt := *data.reviews[reviewersIndices[i]].SubmittedAt
-						affsIdentity, empty, e = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-						if e != nil {
-							if t < 3 {
-								t++
-								lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", e, identity, dt, role, data.fslug, t)
-								time.Sleep(time.Duration(t) * time.Second)
-								continue
-							}
-							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", e, identity, dt, role, data.fslug)
-							break
+				for {
+					dt := *data.reviews[reviewersIndices[i]].SubmittedAt
+					affsIdentity, empty, e = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+					if e != nil {
+						if t < 3 {
+							t++
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", e, identity, dt, role, data.fslug, t)
+							time.Sleep(time.Duration(t) * time.Second)
+							continue
 						}
-						got = true
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", e, identity, dt, role, data.fslug)
 						break
 					}
-					if !got {
-						err = e
-						return
-					}
+					got = true
+					break
 				}
-				affsIdentity = map[string]interface{}{}
-				empty = true
-				// IMPL
+				if !got {
+					err = e
+					return
+				}
 				if empty {
 					email, _ := identity["email"].(string)
 					name, _ := identity["name"].(string)
@@ -2382,11 +2382,12 @@ func updatePRReviews(ctx *lib.Ctx) {
 			}
 			item["author"+dads.MultiOrgNames] = item[orgsKey]
 		}
-		// xxx
 		if hasReviews {
-			rd, _ := item["reviewer_data"]
+			rd, ok := item["reviewer_data"]
+			if !ok {
+				return
+			}
 			for i, ri := range reviewersIndices {
-				fmt.Printf("xxx: postprocess review data %d -> %d\n", i, ri)
 				m, _ := rd.([]interface{})[i].(map[string]interface{})
 				review := data.reviews[ri]
 				m["review_author_association"] = review.AuthorAssociation
@@ -2396,13 +2397,23 @@ func updatePRReviews(ctx *lib.Ctx) {
 				m["review_comment"] = review.Body
 				m["review_id"] = review.ID
 			}
+			if len(currReviews) > 0 {
+				rda, ok := rd.([]interface{})
+				if !ok {
+					return
+				}
+				for _, currReview := range currReviews {
+					rda = append(rda, currReview)
+				}
+				item["reviewer_data"] = rda
+			}
 		}
 		if mtx != nil {
 			mtx.Lock()
 		}
 		upsertItems = append(upsertItems, item)
 		if mtx != nil {
-			mtx.Lock()
+			mtx.Unlock()
 		}
 		return
 	}
@@ -3309,30 +3320,24 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		)
 		for i, identity := range identities {
 			role := roles[i]
-			// IMPL
-			if 1 == 0 {
-				for {
-					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-					if err != nil {
-						if t < 3 {
-							t++
-							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
-							time.Sleep(time.Duration(t) * time.Second)
-							continue
-						}
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
-						break
+			for {
+				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+				if err != nil {
+					if t < 3 {
+						t++
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+						time.Sleep(time.Duration(t) * time.Second)
+						continue
 					}
-					got = true
+					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
 					break
 				}
-				if !got {
-					return
-				}
+				got = true
+				break
 			}
-			affsIdentity = map[string]interface{}{}
-			empty = true
-			// IMPL
+			if !got {
+				return
+			}
 			if empty {
 				email, _ := identity["email"].(string)
 				name, _ := identity["name"].(string)
@@ -3802,30 +3807,24 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		)
 		for i, identity := range identities {
 			role := roles[i]
-			// IMPL
-			if 1 == 0 {
-				for {
-					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-					if err != nil {
-						if t < 3 {
-							t++
-							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
-							time.Sleep(time.Duration(t) * time.Second)
-							continue
-						}
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
-						break
+			for {
+				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+				if err != nil {
+					if t < 3 {
+						t++
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+						time.Sleep(time.Duration(t) * time.Second)
+						continue
 					}
-					got = true
+					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
 					break
 				}
-				if !got {
-					return
-				}
+				got = true
+				break
 			}
-			affsIdentity = map[string]interface{}{}
-			empty = true
-			// IMPL
+			if !got {
+				return
+			}
 			if empty {
 				email, _ := identity["email"].(string)
 				name, _ := identity["name"].(string)
