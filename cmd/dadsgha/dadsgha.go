@@ -80,6 +80,7 @@ var (
 	gJSONsLockMtx       *sync.Mutex
 	gJSONsL2Mtx         *sync.Mutex
 	gSyncAllDatesMtx    *sync.Mutex
+	gPRsMtx             *sync.Mutex
 	gJSONsLocked        bool
 	gAllJSONsBytes      int64
 	gMaxJSONsBytes      int64
@@ -95,6 +96,7 @@ var (
 	gGitHubDS           = &dads.DSStub{DS: "github"}
 	gSyncDates          = map[string]map[string]time.Time{}
 	gSyncAllDates       = map[string]map[string]time.Time{}
+	gPRs                = map[string]string{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -3263,6 +3265,14 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		}
 		rich["all_"+objProp] = rich[objProp]
 	}
+	prKey := githubRepo + "/pulls/" + prNumber
+	if gPRsMtx != nil {
+		gPRsMtx.Lock()
+	}
+	gPRs[prKey] = uuid
+	if gPRsMtx != nil {
+		gPRsMtx.Unlock()
+	}
 	addRichItem(ctx, rich)
 	processed = true
 	return
@@ -5505,6 +5515,7 @@ func handleMT(ctx *lib.Ctx) {
 		gJSONsLockMtx = &sync.Mutex{}
 		gJSONsL2Mtx = &sync.Mutex{}
 		gSyncAllDatesMtx = &sync.Mutex{}
+		gPRsMtx = &sync.Mutex{}
 		dads.SetMT()
 	}
 }
@@ -5555,6 +5566,7 @@ func cacheStats() {
 	lib.Printf("GitHub API users: %d\n", len(gGitHubUsers))
 	lib.Printf("GitHub API repos: %d\n", len(gGitHubRepos))
 	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
+	lib.Printf("github PR reviews processed: %d\n", len(gPRs))
 	lib.Printf("biggest uncompressed JSONs size from a single GHA hour: %dM\n", gMaxJSONsBytes>>20)
 }
 
