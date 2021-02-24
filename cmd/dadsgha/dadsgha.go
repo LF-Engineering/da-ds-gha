@@ -96,7 +96,7 @@ var (
 	gGitHubDS           = &dads.DSStub{DS: "github"}
 	gSyncDates          = map[string]map[string]time.Time{}
 	gSyncAllDates       = map[string]map[string]time.Time{}
-	gPRs                = map[[4]string]struct{}{}
+	gPRs                = map[[5]string]struct{}{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -1323,7 +1323,7 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 			} else {
 				v = va
 			}
-		case "all_labels", "all_assignees", "all_requested_reviewers", "reviewers":
+		case "all_labels", "all_assignees", "all_requested_reviewers", "commenters":
 			vaa, oka := i2sa(va)
 			vba, okb := i2sa(vb)
 			objs := make(map[string]struct{})
@@ -1383,14 +1383,14 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				ary = append(ary, obj)
 			}
 			v = ary
-		case "reviewer_data":
+		case "commenters_data":
 			vaa, oka := i2ma(va)
 			vba, okb := i2ma(vb)
 			objs := make(map[int64]map[string]interface{})
-			// will only put unique reviewers, each with 1 comment
+			// will only put unique commenters, each with 1 comment
 			// objKey = "review_user_id"
 			// will put all unique comments (so one user can be listed more than one)
-			objKey := "review_id"
+			objKey := "comment_id"
 			var (
 				id int64
 				ii int
@@ -1436,6 +1436,13 @@ func mergeIssuePRData(a, b map[string]interface{}) (res map[string]interface{}) 
 				v = va
 			} else {
 				v = vb
+			}
+		case "reviewer_data", "reviewers":
+			// Only one have data (the current ES one) because this is taken from the API
+			if va == nil {
+				v = vb
+			} else {
+				v = va
 			}
 		default:
 			// Always prefer B (newer value), so it can update to null
@@ -1797,7 +1804,7 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 }
 
 func updatePRReviews(ctx *lib.Ctx) {
-	// gPRs keys: [4]string{idx, githubRepo, prNumber, uuid}
+	// gPRs keys: [5]string{idx, githubRepo, prNumber, uuid, fixtureSlug}
 	if len(gPRs) == 0 {
 		return
 	}
@@ -1836,15 +1843,16 @@ func updatePRReviews(ctx *lib.Ctx) {
 	type reviewData struct {
 		idx     string
 		uuid    string
+		fslug   string
 		reviews []*github.PullRequestReview
 		err     error
 	}
-	getReviewParams := func(data [4]string) (string, string, string, int) {
+	getReviewParams := func(data [5]string) (string, string, string, int) {
 		ary := strings.Split(data[1], "/")
 		number, _ := strconv.Atoi(data[2])
 		return "/repos/" + data[1] + "/pulls/" + data[2] + "/reviews", ary[0], ary[1], number
 	}
-	getReviews := func(ch chan reviewData, data [4]string) (result reviewData) {
+	getReviews := func(ch chan reviewData, data [5]string) (result reviewData) {
 		var err error
 		url, owner, repo, number := getReviewParams(data)
 		defer func() {
@@ -1856,6 +1864,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 		}()
 		result.idx = data[0]
 		result.uuid = data[3]
+		result.fslug = data[4]
 		// lib.Printf("get reviews for %s: %+v\n", url, result)
 		retry := false
 		for {
@@ -1939,7 +1948,267 @@ func updatePRReviews(ctx *lib.Ctx) {
 	}
 	lib.Printf("Got reviews data on %d PRs\n", len(reviews))
 	lib.Printf("Hybrid processed %d PR reviews\n", len(gPRs))
-	// xxx
+	uuids := map[string]struct{}{}
+	indices := map[string]struct{}{}
+	for uuid, review := range reviews {
+		uuids[uuid] = struct{}{}
+		indices[review.idx] = struct{}{}
+	}
+	nUUIDs := len(uuids)
+	packSize := ctx.ESBulkSize
+	if packSize > 1000 {
+		packSize = 1000
+	}
+	nPacks := nUUIDs / packSize
+	if nUUIDs%packSize != 0 {
+		nPacks++
+	}
+	auuids := []string{}
+	for uuid := range uuids {
+		auuids = append(auuids, uuid)
+	}
+	packs := []string{}
+	for i := 0; i < nPacks; i++ {
+		from := i * packSize
+		to := from + packSize
+		if to > nUUIDs {
+			to = nUUIDs
+		}
+		s := "["
+		for j := from; j < to; j++ {
+			s += `"` + auuids[j] + `",`
+		}
+		if s != "[" {
+			s = s[:len(s)-1] + "]"
+			packs = append(packs, s)
+		}
+	}
+	pattern := ""
+	for idx := range indices {
+		pattern += idx + ","
+	}
+	pattern = pattern[:len(pattern)-1]
+	nIndices := len(indices)
+	lib.Printf("PR reviews processing %d uuids from %d indices in %d packs\n", nUUIDs, nIndices, nPacks)
+	method := "POST"
+	uuidsCurrent := map[string]map[string]interface{}{}
+	fetchCurrent := func(ch chan error, mtx *sync.Mutex, packNum int) (err error) {
+		defer func() {
+			if err != nil {
+				err = fmt.Errorf("%+v, pattern: %s, pack number %d", err, pattern, packNum)
+			}
+			if ch != nil {
+				ch <- err
+			}
+		}()
+		var (
+			url     string
+			rurl    string
+			scroll  *string
+			payload *bytes.Reader
+		)
+		defer func() {
+			if scroll == nil {
+				return
+			}
+			url := ctx.ESURL + "/_search/scroll"
+			rurl := "/_search/scroll"
+			payloadBytes := []byte(`{"scroll_id":"` + *scroll + `"}`)
+			payload := bytes.NewReader(payloadBytes)
+			req, err := http.NewRequest("DELETE", url, payload)
+			if err != nil {
+				lib.Printf("new request error: %+v for DELETE url: %s, payload: %s\n", err, rurl, string(payloadBytes))
+				err = nil
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				lib.Printf("do request error: %+v for DELETE url: %s, payload: %s\n", err, rurl, string(payloadBytes))
+				err = nil
+				return
+			}
+			status := resp.StatusCode
+			if status != 200 {
+				lib.Printf("%s: deleting scroll: %s %v status: %d\n", pattern, rurl, string(payloadBytes), resp.StatusCode)
+			}
+		}()
+		allItems := 0
+		for {
+			if scroll == nil {
+				url = ctx.ESURL + "/" + pattern + "/_search?scroll=15m&size=1000"
+				rurl = "/" + pattern + "/_search?scroll=15m&size=1000"
+				payload = bytes.NewReader([]byte(`{"query":{"terms":{"uuid":` + packs[packNum] + `}}}`))
+			} else {
+				url = ctx.ESURL + "/_search/scroll"
+				rurl = "/_search/scroll"
+				payload = bytes.NewReader([]byte(`{"scroll":"15m","scroll_id":"` + *scroll + `"}`))
+			}
+			var req *http.Request
+			req, err = http.NewRequest(method, url, payload)
+			if err != nil {
+				lib.Printf("new request error: %+v for %s url: %s\n", err, method, rurl)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			var resp *http.Response
+			resp, err = http.DefaultClient.Do(req)
+			if err != nil {
+				lib.Printf("do request error: %+v for %s url: %s\n", err, method, rurl)
+				return
+			}
+			var body []byte
+			body, err = ioutil.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			status := resp.StatusCode
+			//fmt.Printf("status: %d\n", status)
+			if status == 404 {
+				if scroll != nil && strings.Contains(string(body), "No search context found for id") {
+					lib.Printf("%s: scroll %s expired, re-running\n", pattern, *scroll)
+					scroll = nil
+					err = nil
+					continue
+				}
+				return
+			}
+			if status == 500 {
+				if scroll == nil && status == 500 && strings.Contains(string(body), "Trying to create too many scroll contexts") {
+					lib.Printf("%s: trying to create too many scrolls, sleeping for 10s\n", pattern)
+					time.Sleep(10)
+					continue
+				}
+				return
+			}
+			if status != 200 {
+				s := ""
+				if scroll != nil {
+					s = *scroll
+				}
+				err = fmt.Errorf("%s: scroll %s got %d status", pattern, s, status)
+				return
+			}
+			var result map[string]interface{}
+			err = jsoniter.Unmarshal(body, &result)
+			if err != nil {
+				lib.Printf("unmarshal error: %+v for %s url: %s\n", err, method, rurl)
+				return
+			}
+			sScroll, ok := result["_scroll_id"].(string)
+			if !ok {
+				err = fmt.Errorf("missing _scroll_id in the response")
+				return
+			}
+			scroll = &sScroll
+			items, ok := result["hits"].(map[string]interface{})["hits"].([]interface{})
+			if !ok {
+				err = fmt.Errorf("Missing hits.hits in the response %+v", result)
+				return
+			}
+			nItems := len(items)
+			if nItems == 0 {
+				lib.Printf("%s finished %d items\n", pattern, allItems)
+				break
+			}
+			if mtx != nil {
+				mtx.Lock()
+			}
+			for _, item := range items {
+				doc, _ := item.(map[string]interface{})["_source"].(map[string]interface{})
+				uuid, _ := doc["uuid"].(string)
+				uuidsCurrent[uuid] = doc
+				// lib.Printf("%d/%d: %s:%d\n", i, nItems, uuid, len(doc))
+			}
+			if mtx != nil {
+				mtx.Unlock()
+			}
+			allItems += nItems
+			lib.Printf("%s processed %d items (%d so far)\n", pattern, nItems, allItems)
+		}
+		err = nil
+		return
+	}
+	handleFetchError := func(e error) {
+		if e != nil {
+			lib.Printf("fetching current data: %+v\n", e)
+		}
+	}
+	if thrN > 1 {
+		nThreads := 0
+		ch := make(chan error)
+		mtx := &sync.Mutex{}
+		for i := 0; i < nPacks; i++ {
+			go func(i int) { _ = fetchCurrent(ch, mtx, i) }(i)
+			nThreads++
+			if nThreads == thrN {
+				handleFetchError(<-ch)
+				nThreads--
+			}
+		}
+		for nThreads > 0 {
+			handleFetchError(<-ch)
+			nThreads--
+		}
+	} else {
+		for i := 0; i < nPacks; i++ {
+			handleFetchError(fetchCurrent(nil, nil, i))
+		}
+	}
+	lib.Printf("found %d/%d current uuids values\n", len(uuidsCurrent), nUUIDs)
+	handleMergeError := func(e error) {
+		if e != nil {
+			lib.Printf("merging PR reviews data: %+v\n", e)
+		}
+	}
+	upsertItems := []map[string]interface{}{}
+	mergePRReviewData := func(ch chan error, mtx *sync.Mutex, item map[string]interface{}, data reviewData) (err error) {
+		defer func() {
+			if ch != nil {
+				ch <- err
+			}
+		}()
+		// lib.Printf("mergePRReviewData:\ndata: %s\nreview: %+v\n\n", printObj(item), data)
+		currReviews, ok := item["reviewer_data"].([]interface{})
+		lib.Printf("currReviews(%v): %+v\n", ok, prettyPrint(currReviews))
+		for i, review := range data.reviews {
+			lib.Printf("%d) %+v\n", i, prettyPrint(*review))
+		}
+		if mtx != nil {
+			mtx.Lock()
+		}
+		upsertItems = append(upsertItems, item)
+		if mtx != nil {
+			mtx.Lock()
+		}
+		return
+	}
+	if thrN > 1 {
+		nThreads := 0
+		ch := make(chan error)
+		mtx := &sync.Mutex{}
+		for uuid, data := range uuidsCurrent {
+			update, _ := reviews[uuid]
+			go func(data map[string]interface{}, update reviewData) { _ = mergePRReviewData(ch, mtx, data, update) }(data, update)
+			nThreads++
+			if nThreads == thrN {
+				handleMergeError(<-ch)
+				nThreads--
+			}
+		}
+		for nThreads > 0 {
+			handleMergeError(<-ch)
+			nThreads--
+		}
+	} else {
+		for uuid, data := range uuidsCurrent {
+			update, _ := reviews[uuid]
+			handleMergeError(mergePRReviewData(nil, nil, data, update))
+		}
+	}
+	err := uploadToESInternal(nil, ctx, upsertItems, false)
+	if err != nil {
+		lib.Printf("uploadToESInternal(reviews): %+v\n", err)
+	}
+	return
 }
 
 func uploadToDB(ctx *lib.Ctx, pctx *dads.Ctx, items [][3]string) (e error) {
@@ -3182,12 +3451,12 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["requested_reviewers"] = arys[0]
 	rich["assignees"] = arys[1]
 	// ReviewComments support
-	reviewers := []string{}
+	commenters := []string{}
 	comment := ev.Payload.Comment
-	hasReview := false
+	hasComment := false
 	if comment != nil && (comment.CommitID != nil || comment.PullRequestReviewID != nil) {
 		login := comment.User.Login
-		role := "reviewer_data:0:review_user"
+		role := "commenters_data:0:comment_user"
 		rich[role+"_login"] = login
 		userData, found, err := getGitHubUser(ctx, login)
 		if err != nil {
@@ -3218,9 +3487,9 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			addIdentity(ctx, identity)
 			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 			roles = append(roles, role)
-			reviewers = append(reviewers, login)
+			commenters = append(commenters, login)
 			// We assume that comment is a review when it has ReviewID or CommitID and its GitHub author is found (found in GitHub, his/her affiliation scan be unknown)
-			hasReview = true
+			hasComment = true
 		} else if ctx.Debug > 0 {
 			lib.Printf("warning: PR %s user %s not found\n", role, login)
 			rich[role+"_name"] = nil
@@ -3241,7 +3510,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			rich[role+"_data_bot"] = false
 		}
 	}
-	rich["reviewers"] = reviewers
+	rich["commenters"] = commenters
 	rich["id_in_repo"] = pr.Number
 	rich["title"] = pr.Title
 	rich["title_analyzed"] = pr.Title
@@ -3375,7 +3644,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		}
 		ks := make(map[string]struct{})
 		for k := range rich {
-			if strings.HasPrefix(k, "reviewer_data:") {
+			if strings.HasPrefix(k, "commenters_data:") {
 				ks[k] = struct{}{}
 				continue
 			}
@@ -3400,22 +3669,19 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		rich["author"+dads.MultiOrgNames] = rich[orgsKey]
 	}
 	// Extra data from comment field
-	if hasReview {
-		rd, _ := rich["reviewer_data"]
+	if hasComment {
+		rd, _ := rich["commenters_data"]
 		m, _ := rd.([]interface{})[0].(map[string]interface{})
-		// "review_state" : "CHANGES_REQUESTED",
-		// "review_html_url" : "https://github.com/code-sleuth/gh-pr-reviewers/pull/1#pullrequestreview-545410679",
-		m["review_id"] = comment.ID
-		m["review_comment"] = comment.Body
-		m["review_commit_id"] = comment.CommitID
-		m["review_original_commit_id"] = comment.OriginalCommitID
-		m["review_comment"] = comment.Body
-		m["review_submitted_at"] = comment.CreatedAt
-		m["review_pull_request_review_id"] = comment.PullRequestReviewID
-		m["review_line"] = comment.Line
-		m["review_path"] = comment.Path
-		m["review_position"] = comment.Position
-		m["review_original_position"] = comment.OriginalPosition
+		m["comment_id"] = comment.ID
+		m["comment_body"] = comment.Body
+		m["comment_commit_id"] = comment.CommitID
+		m["comment_original_commit_id"] = comment.OriginalCommitID
+		m["comment_submitted_at"] = comment.CreatedAt
+		m["comment_pull_request_review_id"] = comment.PullRequestReviewID
+		m["comment_line"] = comment.Line
+		m["comment_path"] = comment.Path
+		m["comment_position"] = comment.Position
+		m["comment_original_position"] = comment.OriginalPosition
 	}
 	objProps := []string{"assignees_data", "assignees", "requested_reviewers_data", "requested_reviewers", "labels"}
 	for _, objProp := range objProps {
@@ -3425,7 +3691,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		}
 		rich["all_"+objProp] = rich[objProp]
 	}
-	prKey := [4]string{idx, githubRepo, prNumber, uuid}
+	prKey := [5]string{idx, githubRepo, prNumber, uuid, ev.GHAFxSlug}
 	if gPRsMtx != nil {
 		gPRsMtx.Lock()
 	}
