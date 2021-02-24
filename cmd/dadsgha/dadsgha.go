@@ -464,6 +464,9 @@ func processEndpoint(ctx *lib.Ctx, ep *lib.RawEndpoint, git bool, key [2]string,
 			} else {
 				repositories, response, err = gc[hint].Repositories.List(gctx, path, optUser)
 			}
+			if err != nil && strings.Contains(err.Error(), "404 Not Found") {
+				break
+			}
 			if err != nil && !retry {
 				lib.Printf("Error getting repositories list for org/user: %s: response: %+v, error: %+v, retrying rate\n", path, response, err)
 				abuse := isAbuse(err)
