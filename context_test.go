@@ -28,6 +28,7 @@ func copyContext(in *lib.Ctx) *lib.Ctx {
 		LoadConfig:            in.LoadConfig,
 		SaveConfig:            in.SaveConfig,
 		NoIncremental:         in.NoIncremental,
+		NoAffiliation:         in.NoAffiliation,
 		NoGHAMap:              in.NoGHAMap,
 		NoGHARepoDates:        in.NoGHARepoDates,
 		MaxParallelSHAs:       in.MaxParallelSHAs,
@@ -193,6 +194,7 @@ func TestInit(t *testing.T) {
 		LoadConfig:            false,
 		SaveConfig:            false,
 		NoIncremental:         false,
+		NoAffiliation:         false,
 		NoGHAMap:              false,
 		NoGHARepoDates:        false,
 		ConfigFile:            "gha_config/",
@@ -316,6 +318,15 @@ func TestInit(t *testing.T) {
 				t,
 				copyContext(&defaultContext),
 				map[string]interface{}{"NoIncremental": true},
+			),
+		},
+		{
+			"Setting no affiliation mode",
+			map[string]string{"GHA_NO_AFFILIATION": "1"},
+			dynamicSetFields(
+				t,
+				copyContext(&defaultContext),
+				map[string]interface{}{"NoAffiliation": true},
 			),
 		},
 		{

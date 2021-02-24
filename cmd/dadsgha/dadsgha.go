@@ -2300,25 +2300,30 @@ func updatePRReviews(ctx *lib.Ctx) {
 			)
 			for i, identity := range identities {
 				role := roles[i]
-				for {
-					dt := *data.reviews[reviewersIndices[i]].SubmittedAt
-					affsIdentity, empty, e = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-					if e != nil {
-						if t < 3 {
-							t++
-							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", e, identity, dt, role, data.fslug, t)
-							time.Sleep(time.Duration(t) * time.Second)
-							continue
+				if ctx.NoAffiliation {
+					affsIdentity = map[string]interface{}{}
+					empty = true
+				} else {
+					for {
+						dt := *data.reviews[reviewersIndices[i]].SubmittedAt
+						affsIdentity, empty, e = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+						if e != nil {
+							if t < 3 {
+								t++
+								lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", e, identity, dt, role, data.fslug, t)
+								time.Sleep(time.Duration(t) * time.Second)
+								continue
+							}
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", e, identity, dt, role, data.fslug)
+							break
 						}
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", e, identity, dt, role, data.fslug)
+						got = true
 						break
 					}
-					got = true
-					break
-				}
-				if !got {
-					err = e
-					return
+					if !got {
+						err = e
+						return
+					}
 				}
 				if empty {
 					email, _ := identity["email"].(string)
@@ -3320,23 +3325,28 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		)
 		for i, identity := range identities {
 			role := roles[i]
-			for {
-				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-				if err != nil {
-					if t < 3 {
-						t++
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
-						time.Sleep(time.Duration(t) * time.Second)
-						continue
+			if ctx.NoAffiliation {
+				affsIdentity = map[string]interface{}{}
+				empty = true
+			} else {
+				for {
+					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+					if err != nil {
+						if t < 3 {
+							t++
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+							time.Sleep(time.Duration(t) * time.Second)
+							continue
+						}
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+						break
 					}
-					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+					got = true
 					break
 				}
-				got = true
-				break
-			}
-			if !got {
-				return
+				if !got {
+					return
+				}
 			}
 			if empty {
 				email, _ := identity["email"].(string)
@@ -3807,23 +3817,28 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		)
 		for i, identity := range identities {
 			role := roles[i]
-			for {
-				affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
-				if err != nil {
-					if t < 3 {
-						t++
-						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
-						time.Sleep(time.Duration(t) * time.Second)
-						continue
+			if ctx.NoAffiliation {
+				affsIdentity = map[string]interface{}{}
+				empty = true
+			} else {
+				for {
+					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
+					if err != nil {
+						if t < 3 {
+							t++
+							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
+							time.Sleep(time.Duration(t) * time.Second)
+							continue
+						}
+						lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+						break
 					}
-					lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, giving up\n", err, identity, dt, role, ev.GHAFxSlug)
+					got = true
 					break
 				}
-				got = true
-				break
-			}
-			if !got {
-				return
+				if !got {
+					return
+				}
 			}
 			if empty {
 				email, _ := identity["email"].(string)
