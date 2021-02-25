@@ -2205,6 +2205,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 				}
 				idf, ok := id.(float64)
 				if !ok {
+					lib.Printf("cannot get review_id as float: %+v\n", review)
 					continue
 				}
 				currIDs[int64(idf)] = struct{}{}
@@ -2403,11 +2404,13 @@ func updatePRReviews(ctx *lib.Ctx) {
 		if hasReviews {
 			rd, ok := item["reviewer_data"]
 			if !ok {
+				lib.Printf("has reviews but cannot get reviewer_data: %+v\n", printObj(item))
 				return
 			}
 			for i, ri := range reviewersIndices {
 				m, _ := rd.([]interface{})[i].(map[string]interface{})
 				review := data.reviews[ri]
+				m["review_id"] = review.ID
 				m["review_author_association"] = review.AuthorAssociation
 				m["review_state"] = review.State
 				m["review_submitted_at"] = review.SubmittedAt
@@ -2421,11 +2424,11 @@ func updatePRReviews(ctx *lib.Ctx) {
 				} else {
 					m["review_comment"] = nil
 				}
-				m["review_id"] = review.ID
 			}
 			if len(currReviews) > 0 {
 				rda, ok := rd.([]interface{})
 				if !ok {
+					lib.Printf("has current reviews but cannot read hem as an array: %+v\n", printObj(currReviews))
 					return
 				}
 				for _, currReview := range currReviews {
