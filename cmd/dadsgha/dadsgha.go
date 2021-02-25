@@ -1871,6 +1871,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 		result.fslug = data[4]
 		// lib.Printf("get reviews for %s: %+v\n", url, result)
 		retry := false
+		errored := false
 		for {
 			var (
 				reviews  []*github.PullRequestReview
@@ -1879,11 +1880,15 @@ func updatePRReviews(ctx *lib.Ctx) {
 			)
 			// func (s *PullRequestsService) ListReviews(ctx context.Context, owner, repo string, number int, opts *ListOptions) ([]*PullRequestReview, *Response, error)
 			reviews, response, e = c.PullRequests.ListReviews(gctx, owner, repo, number, opt)
+			if e == nil && errored {
+				lib.Printf("Managed to get the data, after prcessing abuse, rate or other error: %s\n", url)
+			}
 			if e != nil && strings.Contains(e.Error(), "404 Not Found") {
 				lib.Printf("PR reviews do not exist: %s, skipping\n", url)
 				break
 			}
 			if e != nil && !retry {
+				errored = true
 				lib.Printf("Error getting %s reviews: response: %+v, error: %+v, retrying rate\n", url, response, e)
 				lib.Printf("updatePRReviews: handle rate\n")
 				abuse := isAbuse(e)
