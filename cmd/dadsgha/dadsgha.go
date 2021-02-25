@@ -294,7 +294,7 @@ func getGitHubUser(ctx *lib.Ctx, login string) (user map[string]*string, found b
 		if e != nil && !retry {
 			lib.Printf("Error getting %s user: response: %+v, error: %+v, retrying rate\n", login, response, e)
 			lib.Printf("getGitHubUser: handle rate\n")
-			abuse := isAbuse(err)
+			abuse := isAbuse(e)
 			if abuse {
 				sleepFor := 30 + rand.Intn(30)
 				lib.Printf("GitHub detected abuse (get user %s), waiting for %ds\n", login, sleepFor)
@@ -1879,10 +1879,14 @@ func updatePRReviews(ctx *lib.Ctx) {
 			)
 			// func (s *PullRequestsService) ListReviews(ctx context.Context, owner, repo string, number int, opts *ListOptions) ([]*PullRequestReview, *Response, error)
 			reviews, response, e = c.PullRequests.ListReviews(gctx, owner, repo, number, opt)
+			if e != nil && strings.Contains(e.Error(), "404 Not Found") {
+				lib.Printf("PR reviews do not exist: %s, skipping\n", url)
+				break
+			}
 			if e != nil && !retry {
 				lib.Printf("Error getting %s reviews: response: %+v, error: %+v, retrying rate\n", url, response, e)
 				lib.Printf("updatePRReviews: handle rate\n")
-				abuse := isAbuse(err)
+				abuse := isAbuse(e)
 				if abuse {
 					sleepFor := 30 + rand.Intn(30)
 					lib.Printf("GitHub detected abuse (get reviews %s), waiting for %ds\n", url, sleepFor)
@@ -2211,7 +2215,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 		for i, review := range data.reviews {
 			// lib.Printf("%d) %+v\n", i, prettyPrint(*review))
 			if review.ID == nil || review.User == nil || review.SubmittedAt == nil {
-				lib.Printf("skipping review: %+v: review (ID or User or SubmittedAt is null\n")
+				lib.Printf("skipping review: %+v: review (ID or User or SubmittedAt is null\n", printObj(review))
 				continue
 			}
 			id := *review.ID
@@ -2967,7 +2971,7 @@ func getForksStarsCountAPI(ctx *lib.Ctx, ev *lib.Event, origin string) (forks, s
 		if e != nil && !retry {
 			lib.Printf("Error getting %s repo: response: %+v, error: %+v, retrying rate\n", origin, response, e)
 			lib.Printf("getForksStarsCountAPI: handle rate\n")
-			abuse := isAbuse(err)
+			abuse := isAbuse(e)
 			if abuse {
 				sleepFor := 30 + rand.Intn(30)
 				lib.Printf("GitHub detected abuse (get repo %s), waiting for %ds\n", origin, sleepFor)
