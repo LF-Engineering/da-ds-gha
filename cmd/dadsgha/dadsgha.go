@@ -2280,8 +2280,8 @@ func updatePRReviews(ctx *lib.Ctx) {
 				item[role+"_data_name"] = ""
 				item[role+"_data_multi_org_names"] = []string{"Unknown"}
 				item[role+"_data_id"] = ""
-				item[role+"_data_gender_acc"] = nil
-				item[role+"_data_gender"] = ""
+				//item[role+"_data_gender_acc"] = nil
+				//item[role+"_data_gender"] = ""
 				item[role+"_data_domain"] = ""
 				item[role+"_data_bot"] = false
 			}
@@ -2361,8 +2361,8 @@ func updatePRReviews(ctx *lib.Ctx) {
 					affsIdentity[role+"_name"] = name
 					affsIdentity[role+"_user_name"] = username
 					affsIdentity[role+"_domain"] = dads.IdentityAffsDomain(identity)
-					affsIdentity[role+"_gender"] = dads.Unknown
-					affsIdentity[role+"_gender_acc"] = nil
+					//affsIdentity[role+"_gender"] = dads.Unknown
+					//affsIdentity[role+"_gender_acc"] = nil
 					affsIdentity[role+"_org_name"] = dads.Unknown
 					affsIdentity[role+"_bot"] = false
 					affsIdentity[role+dads.MultiOrgNames] = []interface{}{dads.Unknown}
@@ -3277,8 +3277,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 		rich["assignee_data_name"] = ""
 		rich["assignee_data_multi_org_names"] = []string{"Unknown"}
 		rich["assignee_data_id"] = ""
-		rich["assignee_data_gender_acc"] = nil
-		rich["assignee_data_gender"] = ""
+		//rich["assignee_data_gender_acc"] = nil
+		//rich["assignee_data_gender"] = ""
 		rich["assignee_data_domain"] = ""
 		rich["assignee_data_bot"] = false
 	}
@@ -3331,8 +3331,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			rich[role+"_data_name"] = ""
 			rich[role+"_data_multi_org_names"] = []string{"Unknown"}
 			rich[role+"_data_id"] = ""
-			rich[role+"_data_gender_acc"] = nil
-			rich[role+"_data_gender"] = ""
+			//rich[role+"_data_gender_acc"] = nil
+			//rich[role+"_data_gender"] = ""
 			rich[role+"_data_domain"] = ""
 			rich[role+"_data_bot"] = false
 		}
@@ -3439,8 +3439,8 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 				affsIdentity[role+"_name"] = name
 				affsIdentity[role+"_user_name"] = username
 				affsIdentity[role+"_domain"] = dads.IdentityAffsDomain(identity)
-				affsIdentity[role+"_gender"] = dads.Unknown
-				affsIdentity[role+"_gender_acc"] = nil
+				//affsIdentity[role+"_gender"] = dads.Unknown
+				//affsIdentity[role+"_gender_acc"] = nil
 				affsIdentity[role+"_org_name"] = dads.Unknown
 				affsIdentity[role+"_bot"] = false
 				affsIdentity[role+dads.MultiOrgNames] = []interface{}{dads.Unknown}
@@ -3689,8 +3689,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		rich["merged_by_data_name"] = ""
 		rich["merged_by_data_multi_org_names"] = []string{"Unknown"}
 		rich["merged_by_data_id"] = ""
-		rich["merged_by_data_gender_acc"] = nil
-		rich["merged_by_data_gender"] = ""
+		//rich["merged_by_data_gender_acc"] = nil
+		//rich["merged_by_data_gender"] = ""
 		rich["merged_by_data_domain"] = ""
 		rich["merged_by_data_bot"] = false
 	}
@@ -3749,8 +3749,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 					rich[role+"_data_name"] = ""
 					rich[role+"_data_multi_org_names"] = []string{"Unknown"}
 					rich[role+"_data_id"] = ""
-					rich[role+"_data_gender_acc"] = nil
-					rich[role+"_data_gender"] = ""
+					//rich[role+"_data_gender_acc"] = nil
+					//rich[role+"_data_gender"] = ""
 					rich[role+"_data_domain"] = ""
 					rich[role+"_data_bot"] = false
 				}
@@ -3814,8 +3814,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			rich[role+"_data_name"] = ""
 			rich[role+"_data_multi_org_names"] = []string{"Unknown"}
 			rich[role+"_data_id"] = ""
-			rich[role+"_data_gender_acc"] = nil
-			rich[role+"_data_gender"] = ""
+			//rich[role+"_data_gender_acc"] = nil
+			//rich[role+"_data_gender"] = ""
 			rich[role+"_data_domain"] = ""
 			rich[role+"_data_bot"] = false
 		}
@@ -3931,8 +3931,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 				affsIdentity[role+"_name"] = name
 				affsIdentity[role+"_user_name"] = username
 				affsIdentity[role+"_domain"] = dads.IdentityAffsDomain(identity)
-				affsIdentity[role+"_gender"] = dads.Unknown
-				affsIdentity[role+"_gender_acc"] = nil
+				//affsIdentity[role+"_gender"] = dads.Unknown
+				//affsIdentity[role+"_gender_acc"] = nil
 				affsIdentity[role+"_org_name"] = dads.Unknown
 				affsIdentity[role+"_bot"] = false
 				affsIdentity[role+dads.MultiOrgNames] = []interface{}{dads.Unknown}
