@@ -1862,6 +1862,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 		defer func() {
 			result.err = err
 			// lib.Printf("get reviews for %s(%d/%v) -> %+v\n", url, len(result.reviews), result.err, result)
+			runGC()
 			if ch != nil {
 				ch <- result
 			}
@@ -2010,6 +2011,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 			if err != nil {
 				err = fmt.Errorf("%+v, pattern: %s, pack number %d", err, pattern, packNum)
 			}
+			runGC()
 			if ch != nil {
 				ch <- err
 			}
@@ -2183,6 +2185,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 			if !ok {
 				item["reviewers"] = []string{}
 			}
+			runGC()
 			if ch != nil {
 				ch <- err
 			}
