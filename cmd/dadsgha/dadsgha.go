@@ -1882,7 +1882,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 			// func (s *PullRequestsService) ListReviews(ctx context.Context, owner, repo string, number int, opts *ListOptions) ([]*PullRequestReview, *Response, error)
 			reviews, response, e = c.PullRequests.ListReviews(gctx, owner, repo, number, opt)
 			if e == nil && errored {
-				lib.Printf("Managed to get the data, after prcessing abuse, rate or other error: %s\n", url)
+				lib.Printf("Managed to get the data, after processing abuse, rate or other error: %s\n", url)
 			}
 			if e != nil && strings.Contains(e.Error(), "404 Not Found") {
 				lib.Printf("PR reviews do not exist: %s, skipping\n", url)
