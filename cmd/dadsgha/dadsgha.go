@@ -1943,10 +1943,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 			)
 			// func (s *PullRequestsService) ListReviews(ctx context.Context, owner, repo string, number int, opts *ListOptions) ([]*PullRequestReview, *Response, error)
 			reviews, response, e = c.PullRequests.ListReviews(gctx, owner, repo, number, opt)
-			// IMPL
-			//if ctx.Debug > 0 {
-			lib.Printf("ListReviews(%s, %s, %d) -> (%+v, %+v, %v)\n", owner, repo, number, reviews, response, e)
-			//}
+			if ctx.Debug > 0 {
+				lib.Printf("ListReviews(%s, %s, %d) -> (%+v, %+v, %v)\n", owner, repo, number, reviews, response, e)
+			}
 			if e == nil && errored {
 				lib.Printf("Managed to get the data, after processing abuse, rate or other error: %s\n", url)
 			}
@@ -2006,6 +2005,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 			er++
 			return
 		}
+		if num%1000 == 0 {
+			lib.Printf("Processed %s\n", info)
+		}
 		nReviews := len(review.reviews)
 		if nReviews > 0 {
 			reviews[review.uuid] = review
@@ -2013,10 +2015,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 			got++
 			gotR += nReviews
 		} else {
-			// IMPL
-			//if ctx.Debug > 0 {
-			lib.Printf("No review data for %s\n", info)
-			//}
+			if ctx.Debug > 0 {
+				lib.Printf("No review data for %s\n", info)
+			}
 			emp++
 		}
 	}
