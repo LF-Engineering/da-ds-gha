@@ -1863,31 +1863,55 @@ func updatePRReviews(ctx *lib.Ctx) {
 		number, _ := strconv.Atoi(data[2])
 		return "/repos/" + data[1] + "/pulls/" + data[2] + "/reviews", ary[0], ary[1], number
 	}
+	//lib.Printf("gPRName2ID: %+v\n", gPRName2ID)
+	//lib.Printf("gPRID2Name: %+v\n", gPRID2Name)
+	var (
+		cmtx   *sync.Mutex
+		lock   func()
+		unlock func()
+	)
 	orCache := map[[2]string][2]string{}
-	latestKnown := func(owner, repo string) (string, string) {
-		ky := [2]string{owner, repo}
+	mapped := map[string]string{}
+	latestKnown := func(githubRepo, owner, repo string, prNum int) (string, string) {
+		prNumber := strconv.Itoa(prNum)
+		ky := [2]string{githubRepo, prNumber}
+		lock()
 		res, ok := orCache[ky]
+		unlock()
 		if ok {
 			return res[0], res[1]
 		}
 		prID, ok := gPRName2ID[ky]
 		if !ok {
 			lib.Printf("WARNING: There is no name to PR ID mapping for %s/%s\n", owner, repo)
+			lock()
 			orCache[ky] = [2]string{owner, repo}
+			unlock()
 			return owner, repo
 		}
 		ary, ok := gPRID2Name[prID]
 		if !ok {
 			lib.Printf("WARNING: There is no PR ID to name mapping for %s/%s -> %d\n", owner, repo, prID)
+			lock()
 			orCache[ky] = [2]string{owner, repo}
+			unlock()
 			return owner, repo
 		}
-		newOwner := ary[0]
-		newRepo := ary[1]
+		ary2 := strings.Split(ary[0], "/")
+		newOwner := ary2[0]
+		newRepo := ary2[1]
+		if ctx.Debug > 0 {
+			lib.Printf("got mapping %s,%d -> %d -> %+v\n", githubRepo, prNum, prID, ary)
+		}
 		if newOwner != owner || newRepo != repo {
 			lib.Printf("Using the latest name %s/%s for %s/%s\n", newOwner, newRepo, owner, repo)
+			lock()
+			mapped[githubRepo+"/"+prNumber] = newOwner + "/" + newRepo + "/" + prNumber
+			unlock()
 		}
+		lock()
 		orCache[ky] = [2]string{newOwner, newRepo}
+		unlock()
 		return newOwner, newRepo
 	}
 	getReviews := func(ch chan reviewData, data [5]string) (result reviewData) {
@@ -1906,7 +1930,8 @@ func updatePRReviews(ctx *lib.Ctx) {
 		result.owner = owner
 		result.repo = repo
 		result.number = number
-		owner, repo = latestKnown(owner, repo)
+		githubRepo := owner + "/" + repo
+		owner, repo = latestKnown(githubRepo, owner, repo, number)
 		// lib.Printf("get reviews for %s: %+v\n", url, result)
 		retry := false
 		errored := false
@@ -1918,6 +1943,10 @@ func updatePRReviews(ctx *lib.Ctx) {
 			)
 			// func (s *PullRequestsService) ListReviews(ctx context.Context, owner, repo string, number int, opts *ListOptions) ([]*PullRequestReview, *Response, error)
 			reviews, response, e = c.PullRequests.ListReviews(gctx, owner, repo, number, opt)
+			// IMPL
+			//if ctx.Debug > 0 {
+			lib.Printf("ListReviews(%s, %s, %d) -> (%+v, %+v, %v)\n", owner, repo, number, reviews, response, e)
+			//}
 			if e == nil && errored {
 				lib.Printf("Managed to get the data, after processing abuse, rate or other error: %s\n", url)
 			}
@@ -1965,19 +1994,30 @@ func updatePRReviews(ctx *lib.Ctx) {
 	}
 	reviews := map[string]reviewData{}
 	num := 0
+	got := 0
+	gotR := 0
+	emp := 0
+	er := 0
 	addReviewData := func(review reviewData) {
 		num++
-		info := fmt.Sprintf("%d/%d: %s/%s/%d\n", num, nPRs, review.owner, review.repo, review.number)
+		info := fmt.Sprintf("%d/%d: %s/%s/%d", num, nPRs, review.owner, review.repo, review.number)
 		if review.err != nil {
 			lib.Printf("Failed to get %s review data: %+v, review: %+v\n", info, review.err, review)
+			er++
 			return
 		}
 		nReviews := len(review.reviews)
 		if nReviews > 0 {
 			reviews[review.uuid] = review
-			lib.Printf("Got %d review(s) data for %s/%s/%d\n", nReviews, info)
+			lib.Printf("Got %d review(s) data for %s\n", nReviews, info)
+			got++
+			gotR += nReviews
 		} else {
+			// IMPL
+			//if ctx.Debug > 0 {
 			lib.Printf("No review data for %s\n", info)
+			//}
+			emp++
 		}
 	}
 	thrN := gThrN
@@ -1987,6 +2027,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 	if thrN > 1 {
 		nThreads := 0
 		ch := make(chan reviewData)
+		cmtx = &sync.Mutex{}
+		lock = func() { cmtx.Lock() }
+		unlock = func() { cmtx.Unlock() }
 		for data := range gPRs {
 			go getReviews(ch, data)
 			nThreads++
@@ -2000,11 +2043,15 @@ func updatePRReviews(ctx *lib.Ctx) {
 			nThreads--
 		}
 	} else {
+		lock = func() {}
+		unlock = func() {}
 		for data := range gPRs {
 			addReviewData(getReviews(nil, data))
 		}
 	}
 	lib.Printf("Got reviews data on %d PRs\n", len(reviews))
+	lib.Printf("Mapped %d PR repo names: %+v\n", len(mapped), mapped)
+	lib.Printf("No reviews on %d, reviews present on %d (%d reviews overall), error on %d, processed %d\n", emp, got, gotR, er, num)
 	lib.Printf("Hybrid processed %d PR reviews\n", nPRs)
 	uuids := map[string]struct{}{}
 	indices := map[string]struct{}{}

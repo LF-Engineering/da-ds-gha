@@ -16,6 +16,7 @@ export GHA_NO_GHA_REPO_DATES=''
 export GHA_MAX_PARALLEL_SHAS=''
 export GHA_MAX_JSONS_GBYTES=5
 export GHA_MEM_HEARTBEAT_GBYTES=12
+export GHA_MAX_PARALLEL_API_REVIEWS=16
 export GHA_ES_URL="`cat ES_URL.test.secret`"
 export GHA_DB_CONN="`cat DB_CONN.test.secret`"
 export GHA_GITHUB_OAUTH="`cat OAUTHS.secret`"
