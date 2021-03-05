@@ -53,6 +53,7 @@ func GetRateLimits(gctx context.Context, ctx *Ctx, gcs []*github.Client, core bo
 		remainings []int
 		durations  []time.Duration
 	)
+	display := false
 	for idx, gc := range gcs {
 		rl, _, err := gc.RateLimits(gctx)
 		if err != nil {
@@ -62,6 +63,7 @@ func GetRateLimits(gctx context.Context, ctx *Ctx, gcs []*github.Client, core bo
 				limits = append(limits, -1)
 				remainings = append(remainings, -1)
 				durations = append(durations, rem)
+				display = true
 				continue
 			}
 			Printf("GetRateLimit(%d): %v\n", idx, err)
@@ -90,7 +92,7 @@ func GetRateLimits(gctx context.Context, ctx *Ctx, gcs []*github.Client, core bo
 			hint = idx
 		}
 	}
-	if ctx.Debug > 0 {
+	if display || ctx.Debug > 0 {
 		Printf("GetRateLimits: hint: %d, limits: %+v, remaining: %+v, reset: %+v\n", hint, limits, remainings, durations)
 	}
 	return hint, limits, remainings, durations

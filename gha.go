@@ -187,7 +187,7 @@ type Asset struct {
 
 // PullRequest - GHA Pull Request structure
 type PullRequest struct {
-	ID                  int        `json:"id"`
+	ID                  int64      `json:"id"`
 	Base                Branch     `json:"base"`
 	Head                Branch     `json:"head"`
 	User                Actor      `json:"user"`

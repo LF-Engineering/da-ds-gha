@@ -24,6 +24,7 @@ import (
 
 	dads "github.com/LF-Engineering/da-ds"
 	lib "github.com/LF-Engineering/da-ds-gha"
+	"github.com/LF-Engineering/da-ds/build"
 	"github.com/google/go-github/github"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/pkg/errors"
@@ -97,6 +98,8 @@ var (
 	gSyncDates          = map[string]map[string]time.Time{}
 	gSyncAllDates       = map[string]map[string]time.Time{}
 	gPRs                = map[[5]string]struct{}{}
+	gPRName2ID          = map[[2]string]int64{}
+	gPRID2Name          = map[int64][2]string{}
 )
 
 func processFixtureFile(ch chan lib.Fixture, ctx *lib.Ctx, fixtureFile string) (fixture lib.Fixture) {
@@ -1808,11 +1811,12 @@ func addRichItem(ctx *lib.Ctx, rich map[string]interface{}) {
 }
 
 func updatePRReviews(ctx *lib.Ctx) {
-	// gPRs keys: [5]string{idx, githubRepo, prNumber, uuid, fixtureSlug}
-	if len(gPRs) == 0 {
+	//on gPRs keys: [5]string{idx, githubRepo, prNumber, uuid, fixtureSlug}
+	nPRs := len(gPRs)
+	if nPRs == 0 {
 		return
 	}
-	lib.Printf("Hybrid processing %d PR reviews\n", len(gPRs))
+	lib.Printf("Hybrid processing %d PR reviews\n", nPRs)
 	var c *github.Client
 	if gGitHubMtx != nil {
 		gGitHubMtx.RLock()
@@ -1848,6 +1852,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 		idx     string
 		uuid    string
 		fslug   string
+		owner   string
+		repo    string
+		number  int
 		reviews []*github.PullRequestReview
 		err     error
 	}
@@ -1856,13 +1863,39 @@ func updatePRReviews(ctx *lib.Ctx) {
 		number, _ := strconv.Atoi(data[2])
 		return "/repos/" + data[1] + "/pulls/" + data[2] + "/reviews", ary[0], ary[1], number
 	}
+	orCache := map[[2]string][2]string{}
+	latestKnown := func(owner, repo string) (string, string) {
+		ky := [2]string{owner, repo}
+		res, ok := orCache[ky]
+		if ok {
+			return res[0], res[1]
+		}
+		prID, ok := gPRName2ID[ky]
+		if !ok {
+			lib.Printf("WARNING: There is no name to PR ID mapping for %s/%s\n", owner, repo)
+			orCache[ky] = [2]string{owner, repo}
+			return owner, repo
+		}
+		ary, ok := gPRID2Name[prID]
+		if !ok {
+			lib.Printf("WARNING: There is no PR ID to name mapping for %s/%s -> %d\n", owner, repo, prID)
+			orCache[ky] = [2]string{owner, repo}
+			return owner, repo
+		}
+		newOwner := ary[0]
+		newRepo := ary[1]
+		if newOwner != owner || newRepo != repo {
+			lib.Printf("Using the latest name %s/%s for %s/%s\n", newOwner, newRepo, owner, repo)
+		}
+		orCache[ky] = [2]string{newOwner, newRepo}
+		return newOwner, newRepo
+	}
 	getReviews := func(ch chan reviewData, data [5]string) (result reviewData) {
 		var err error
 		url, owner, repo, number := getReviewParams(data)
 		defer func() {
 			result.err = err
 			// lib.Printf("get reviews for %s(%d/%v) -> %+v\n", url, len(result.reviews), result.err, result)
-			runGC()
 			if ch != nil {
 				ch <- result
 			}
@@ -1870,6 +1903,10 @@ func updatePRReviews(ctx *lib.Ctx) {
 		result.idx = data[0]
 		result.uuid = data[3]
 		result.fslug = data[4]
+		result.owner = owner
+		result.repo = repo
+		result.number = number
+		owner, repo = latestKnown(owner, repo)
 		// lib.Printf("get reviews for %s: %+v\n", url, result)
 		retry := false
 		errored := false
@@ -1927,13 +1964,20 @@ func updatePRReviews(ctx *lib.Ctx) {
 		return
 	}
 	reviews := map[string]reviewData{}
+	num := 0
 	addReviewData := func(review reviewData) {
+		num++
+		info := fmt.Sprintf("%d/%d: %s/%s/%d\n", num, nPRs, review.owner, review.repo, review.number)
 		if review.err != nil {
-			lib.Printf("Failed to get review data: %+v, review: %+v\n", review.err, review)
+			lib.Printf("Failed to get %s review data: %+v, review: %+v\n", info, review.err, review)
 			return
 		}
-		if len(review.reviews) > 0 {
+		nReviews := len(review.reviews)
+		if nReviews > 0 {
 			reviews[review.uuid] = review
+			lib.Printf("Got %d review(s) data for %s/%s/%d\n", nReviews, info)
+		} else {
+			lib.Printf("No review data for %s\n", info)
 		}
 	}
 	thrN := gThrN
@@ -1961,7 +2005,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 		}
 	}
 	lib.Printf("Got reviews data on %d PRs\n", len(reviews))
-	lib.Printf("Hybrid processed %d PR reviews\n", len(gPRs))
+	lib.Printf("Hybrid processed %d PR reviews\n", nPRs)
 	uuids := map[string]struct{}{}
 	indices := map[string]struct{}{}
 	for uuid, review := range reviews {
@@ -2011,7 +2055,6 @@ func updatePRReviews(ctx *lib.Ctx) {
 			if err != nil {
 				err = fmt.Errorf("%+v, pattern: %s, pack number %d", err, pattern, packNum)
 			}
-			runGC()
 			if ch != nil {
 				ch <- err
 			}
@@ -2185,7 +2228,6 @@ func updatePRReviews(ctx *lib.Ctx) {
 			if !ok {
 				item["reviewers"] = []string{}
 			}
-			runGC()
 			if ch != nil {
 				ch <- err
 			}
@@ -2420,8 +2462,8 @@ func updatePRReviews(ctx *lib.Ctx) {
 				m["review_commit_id"] = review.CommitID
 				if review.Body != nil {
 					body := *review.Body
-					if len(body) > 0x10000 {
-						body = body[:0x10000]
+					if len(body) > 0x4000 {
+						body = body[:0x4000]
 					}
 					m["review_comment"] = body
 				} else {
@@ -3549,7 +3591,6 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich := make(map[string]interface{})
 	now := time.Now()
 	pr := ev.Payload.PullRequest
-	prID := strconv.Itoa(pr.ID)
 	prNumber := strconv.Itoa(pr.Number)
 	repo := "https://github.com/" + origin
 	githubRepo := origin
@@ -3557,10 +3598,9 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		githubRepo = githubRepo[:len(githubRepo)-4]
 	}
 	rich["github_repo"] = githubRepo
-	// uuid := dads.UUIDNonEmpty(&dads.Ctx{}, repo, prID)
 	uuid := dads.UUIDNonEmpty(&dads.Ctx{}, githubRepo, prNumber)
 	if uuid == "" {
-		lib.Printf("error: enrichPRData: failed to generate uuid for (%s,%s)\n", repo, prID)
+		lib.Printf("error: enrichPRData: failed to generate uuid for (%s,%d)\n", repo, pr.ID)
 		return
 	}
 	rich["upsert"] = true
@@ -4008,6 +4048,8 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 		gPRsMtx.Lock()
 	}
 	gPRs[prKey] = struct{}{}
+	gPRName2ID[[2]string{githubRepo, prNumber}] = pr.ID
+	gPRID2Name[pr.ID] = [2]string{githubRepo, prNumber}
 	if gPRsMtx != nil {
 		gPRsMtx.Unlock()
 	}
@@ -6240,6 +6282,11 @@ func handleGHAMap(ctx *lib.Ctx) {
 }
 
 func handleMT(ctx *lib.Ctx) {
+	appName := build.AppName
+	ds := os.Getenv("DA_DS")
+	if ds != "" {
+		appName += "-" + ds
+	}
 	gThrN = lib.GetThreadsNum(ctx)
 	if gThrN > 1 {
 		gRichMtx = &sync.Mutex{}
@@ -6257,6 +6304,7 @@ func handleMT(ctx *lib.Ctx) {
 		gPRsMtx = &sync.Mutex{}
 		dads.SetMT()
 	}
+	lib.Printf("running %s with %d threads\n", appName, gThrN)
 }
 
 func getMemUsage() string {
@@ -6306,6 +6354,7 @@ func cacheStats() {
 	lib.Printf("GitHub API repos: %d\n", len(gGitHubRepos))
 	lib.Printf("identities uploaded: %d\n", len(gUploadedIdentities))
 	lib.Printf("github PR reviews processed: %d\n", len(gPRs))
+	lib.Printf("github PR name/ID map items: %d, %d\n", len(gPRName2ID), len(gPRID2Name))
 	lib.Printf("biggest uncompressed JSONs size from a single GHA hour: %dM\n", gMaxJSONsBytes>>20)
 }
 
