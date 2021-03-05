@@ -2415,7 +2415,7 @@ func updatePRReviews(ctx *lib.Ctx) {
 						dt := *data.reviews[reviewersIndices[i]].SubmittedAt
 						affsIdentity, empty, e = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
 						if e != nil {
-							if t < 3 {
+							if t < 5 {
 								t++
 								lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", e, identity, dt, role, data.fslug, t)
 								time.Sleep(time.Duration(t) * time.Second)
@@ -3494,7 +3494,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 				for {
 					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
 					if err != nil {
-						if t < 3 {
+						if t < 5 {
 							t++
 							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
 							time.Sleep(time.Duration(t) * time.Second)
@@ -3984,7 +3984,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 				for {
 					affsIdentity, empty, err = dads.IdentityAffsData(pctx, gGitHubDS, identity, nil, dt, role)
 					if err != nil {
-						if t < 3 {
+						if t < 5 {
 							t++
 							lib.Printf("cannot get affiliations data: %v for %v,%v,%s,%s, retrying after %ds\n", err, identity, dt, role, ev.GHAFxSlug, t)
 							time.Sleep(time.Duration(t) * time.Second)
