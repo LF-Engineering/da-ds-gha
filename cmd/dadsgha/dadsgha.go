@@ -3253,6 +3253,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = now
 	rich["issue_creation_date"] = issue.CreatedAt
+	rich["grimoire_creation_date"] = ev.CreatedAt
 	rich["uuid"] = uuid
 	rich["issue_id"] = issueID
 	rich["is_github_issue"] = 1
@@ -3663,6 +3664,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["repository"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["pr_creation_date"] = pr.CreatedAt
+	rich["grimoire_creation_date"] = ev.CreatedAt
 	rich["uuid"] = uuid
 	rich["pr_id"] = pr.ID
 	rich["is_github_pull_request"] = 1
