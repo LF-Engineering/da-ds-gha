@@ -87,7 +87,7 @@ var (
 	gMaxJSONsBytes      int64
 	gRichItems          = map[string][]map[string]interface{}{}
 	gEnsuredIndices     = map[string]struct{}{}
-	gGitHubRichMapping  = `{"properties":{"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
+	gGitHubRichMapping  = `{"properties":{"all_assignees_data":{"type":"nested"},"all_requested_reviewers_data":{"type":"nested"},"assignees_data":{"type":"nested"},"commenters_data":{"type":"nested"},"requested_reviewers_data":{"type":"nested"},"reviewer_data":{"type":"nested"},"merge_author_geolocation":{"type":"geo_point"},"assignee_geolocation":{"type":"geo_point"},"state":{"type":"keyword"},"user_geolocation":{"type":"geo_point"},"title_analyzed":{"type":"text","index":true}}}`
 	gNewFormatStarts    = time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
 	gMinGHA             = time.Date(2014, 1, 1, 0, 0, 0, 0, time.UTC)
 	gGitHubUsers        = map[string]map[string]*string{}
