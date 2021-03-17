@@ -37,6 +37,7 @@ maybe_wait () {
       run=`curl -s "${ESURL}/_tasks?actions=*reindex&detailed" | grep "${idx}"`
       if [ -z "${run}" ]
       then
+        echo '.'
         break
       fi
     done
