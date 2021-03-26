@@ -3250,6 +3250,7 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 	rich["origin"] = repo
 	rich["tag"] = repo
 	rich["repository"] = repo
+	rich["repo_name"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = now
 	rich["issue_creation_date"] = issue.CreatedAt
@@ -3662,6 +3663,7 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 	rich["origin"] = repo
 	rich["tag"] = repo
 	rich["repository"] = repo
+	rich["repo_name"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["pr_creation_date"] = pr.CreatedAt
 	rich["grimoire_creation_date"] = ev.CreatedAt
@@ -4211,6 +4213,7 @@ func enrichRepoData(ctx *lib.Ctx, ev *lib.Event, forkEvent bool, origin string, 
 	rich["origin"] = repo
 	rich["tag"] = repo
 	rich["url"] = repo
+	rich["repo_name"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = ev.CreatedAt
 	rich["grimoire_creation_date"] = ev.CreatedAt
@@ -4286,6 +4289,7 @@ func enrichRepoDataOld(ctx *lib.Ctx, ev *lib.EventOld, origin string, startDates
 	rich["origin"] = repo
 	rich["tag"] = repo
 	rich["url"] = repo
+	rich["repo_name"] = repo
 	rich["metadata__updated_on"] = ev.CreatedAt
 	rich["metadata__timestamp"] = ev.CreatedAt
 	rich["grimoire_creation_date"] = ev.CreatedAt

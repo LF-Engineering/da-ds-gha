@@ -1,7 +1,7 @@
 #!/bin/bash
 if [ -z "${1}" ]
 then
-  echo "$0: you must provide environment as a 1st argument:  prod|test"
+  echo "$0: you must provide environment as a 1st argument: prod|test"
   exit 1
 fi
 fn="ES_URL.${1}.secret"
