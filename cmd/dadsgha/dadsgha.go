@@ -58,6 +58,10 @@ const (
 	// cAllowedRepoAPIAge - when doing fork event enrichment we use GH API:
 	// when more than 1 fork is processed then we skip repeating the same state for 15 minutes, and after that time we invaliadte the cache
 	cAllowedRepoAPIAge = 1800
+	// cMaxReviewers - maximum number of distinct reviewers on a single PR
+	cMaxReviewers = 1000
+	// cMaxReviews - maximum number of reviews on a single PR
+	cMaxReviews = 1000
 )
 
 var (
@@ -2359,8 +2363,10 @@ func updatePRReviews(ctx *lib.Ctx) {
 				reviewersMap[login] = struct{}{}
 				reviewersIndices = append(reviewersIndices, i)
 				hasReviews = true
-			} else if ctx.Debug > 0 {
-				lib.Printf("warning: PR %s user %s not found\n", role, login)
+			} else {
+				if ctx.Debug > 0 {
+					lib.Printf("warning: PR %s user %s not found\n", role, login)
+				}
 				item[role+"_name"] = nil
 				item[role+"_domain"] = nil
 				item[role+"_org"] = nil
@@ -2390,6 +2396,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 			reviewers = append(reviewers, reviewer)
 		}
 		item["reviewers"] = reviewers
+		if len(item["reviewers"].([]interface{})) > cMaxReviewers {
+			item["reviewers"] = item["reviewers"].([]interface{})[:cMaxReviewers]
+		}
 		if len(identities) > 0 {
 			debugSQL := 0
 			if ctx.Debug > 0 {
@@ -2528,6 +2537,9 @@ func updatePRReviews(ctx *lib.Ctx) {
 					rda = append(rda, currReview)
 				}
 				item["reviewer_data"] = rda
+				if len(item["reviewer_data"].([]interface{})) > cMaxReviews {
+					item["reviewer_data"] = item["reviewer_data"].([]interface{})[:cMaxReviews]
+				}
 			}
 		}
 		if mtx != nil {
