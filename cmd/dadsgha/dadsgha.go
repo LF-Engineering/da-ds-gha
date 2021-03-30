@@ -2395,9 +2395,10 @@ func updatePRReviews(ctx *lib.Ctx) {
 		for reviewer := range reviewersMap {
 			reviewers = append(reviewers, reviewer)
 		}
-		item["reviewers"] = reviewers
-		if len(item["reviewers"].([]interface{})) > cMaxReviewers {
-			item["reviewers"] = item["reviewers"].([]interface{})[:cMaxReviewers]
+		if len(reviewers) > cMaxReviewers {
+			item["reviewers"] = reviewers[:cMaxReviewers]
+		} else {
+			item["reviewers"] = reviewers
 		}
 		if len(identities) > 0 {
 			debugSQL := 0
@@ -2536,9 +2537,10 @@ func updatePRReviews(ctx *lib.Ctx) {
 				for _, currReview := range currReviews {
 					rda = append(rda, currReview)
 				}
-				item["reviewer_data"] = rda
-				if len(item["reviewer_data"].([]interface{})) > cMaxReviews {
-					item["reviewer_data"] = item["reviewer_data"].([]interface{})[:cMaxReviews]
+				if len(rda) > cMaxReviews {
+					item["reviewer_data"] = rda[:cMaxReviews]
+				} else {
+					item["reviewer_data"] = rda
 				}
 			}
 		}
@@ -3424,8 +3426,10 @@ func enrichIssueData(ctx *lib.Ctx, ev *lib.Event, origin string, startDates map[
 			identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 			roles = append(roles, role)
 			assignees = append(assignees, login)
-		} else if ctx.Debug > 0 {
-			lib.Printf("warning: PR %s user %s not found\n", role, login)
+		} else {
+			if ctx.Debug > 0 {
+				lib.Printf("warning: PR %s user %s not found\n", role, login)
+			}
 			rich[role+"_name"] = nil
 			rich[role+"_domain"] = nil
 			rich[role+"_org"] = nil
@@ -3842,8 +3846,10 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 					identities = append(identities, map[string]interface{}{"name": identity[0], "username": identity[1], "email": identity[2]})
 					roles = append(roles, role)
 					arys[oi] = append(arys[oi], login)
-				} else if ctx.Debug > 0 {
-					lib.Printf("warning: PR %s user %s not found\n", role, login)
+				} else {
+					if ctx.Debug > 0 {
+						lib.Printf("warning: PR %s user %s not found\n", role, login)
+					}
 					rich[role+"_name"] = nil
 					rich[role+"_domain"] = nil
 					rich[role+"_org"] = nil
@@ -3907,8 +3913,10 @@ func enrichPRData(ctx *lib.Ctx, ev *lib.Event, evo *lib.EventOld, origin string,
 			commenters = append(commenters, login)
 			// We assume that comment is a review when it has ReviewID or CommitID and its GitHub author is found (found in GitHub, his/her affiliation scan be unknown)
 			hasComment = true
-		} else if ctx.Debug > 0 {
-			lib.Printf("warning: PR %s user %s not found\n", role, login)
+		} else {
+			if ctx.Debug > 0 {
+				lib.Printf("warning: PR %s user %s not found\n", role, login)
+			}
 			rich[role+"_name"] = nil
 			rich[role+"_domain"] = nil
 			rich[role+"_org"] = nil
