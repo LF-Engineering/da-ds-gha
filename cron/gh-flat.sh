@@ -5,8 +5,8 @@ then
   echo "$0: missing ./repo_access.secret file"
   exit 1
 fi
-repo="`cat ./metrics_repo_access.secret`"
-if [ -z "$repo" ]
+metrics_repo="`cat ./metrics_repo_access.secret`"
+if [ -z "$metrics_repo" ]
 then
   echo "$0: missing ./metrics_repo_access.secret file"
   exit 2
