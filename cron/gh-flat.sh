@@ -1,8 +1,8 @@
 #!/bin/bash
-repo="`cat ./flat_secrets/repo_access.secret`"
+repo="`cat ./repo_access.secret`"
 if [ -z "$repo" ]
 then
-  echo "$0: missing ./flat_secrets/repo_access.secret file"
+  echo "$0: missing ./repo_access.secret file"
   exit 1
 fi
 if [ -z "$1" ]
