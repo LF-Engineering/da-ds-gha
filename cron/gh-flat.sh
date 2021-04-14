@@ -5,10 +5,16 @@ then
   echo "$0: missing ./repo_access.secret file"
   exit 1
 fi
+repo="`cat ./metrics_repo_access.secret`"
+if [ -z "$repo" ]
+then
+  echo "$0: missing ./metrics_repo_access.secret file"
+  exit 2
+fi
 if [ -z "$1" ]
 then
   echo "$0: you need to specify env as a 1st arg: test|prod"
-  exit 2
+  exit 3
 fi
 for e in ELASTIC_URL ELASTIC_USERNAME ELASTIC_PASSWORD API_DB_ENDPOINT SH_DB_ENDPOINT \
          AUTH0_GRANT_TYPE AUTH0_CLIENT_ID AUTH0_CLIENT_SECRET AUTH0_AUDIENCE \
@@ -21,30 +27,30 @@ do
   if [ -z "$value" ]
   then
     echo "$0: you need to provide ${fn} file"
-    exit 3
+    exit 4
   fi
   export $e="${value}"
 done
-cd ..
+cd .. || exit 5
 if [ -d "dev-analytics-metrics" ]
 then
-  cd dev-analytics-metrics || exit 4
-  git pull || exit 5
+  cd dev-analytics-metrics || exit 6
+  git pull || exit 7
 else
-  git clone https://github.com/LF-Engineering/dev-analytics-metrics.git || exit 6
-  cd dev-analytics-metrics || exit 7
+  git clone "${metrics_repo}" || exit 8
+  cd dev-analytics-metrics || exit 9
 fi
-make swagger || exit 8
-CGO_ENABLED=0 go build -ldflags '-s -w' -o ./gh-flat-binary ./ghprflat/github_pr_flat_structure_handler.go || exit 9
+make swagger || exit 10
+CGO_ENABLED=0 go build -ldflags '-s -w' -o ./gh-flat-binary ./ghprflat/github_pr_flat_structure_handler.go || exit 11
 # Now get all non-disabled fixtures from dev-analytics-api for a given env branch
 function cleanup {
   rm -rf dev-analytics-api
 }
-git clone "${repo}" || exit 10
+git clone "${repo}" || exit 12
 trap cleanup EXIT
-cd dev-analytics-api || exit 11
-git checkout "$1" || exit 12
-cd .. || exit 13
+cd dev-analytics-api || exit 13
+git checkout "$1" || exit 14
+cd .. || exit 15
 cmdline='./gh-flat-binary '
 for f in `find dev-analytics-api/app/services/lf/bootstrap/fixtures/ -type f -iname "*.y*ml"`
 do
