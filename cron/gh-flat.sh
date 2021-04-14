@@ -52,15 +52,28 @@ cd dev-analytics-api || exit 13
 git checkout "$1" || exit 14
 cd .. || exit 15
 cmdline='./gh-flat-binary '
-for f in `find dev-analytics-api/app/services/lf/bootstrap/fixtures/ -type f -iname "*.y*ml"`
-do
-  disabled=`yq r "$f" 'disabled'`
-  if [ -z "$disabled" ]
-  then
-    slug=`yq r "$f" 'native.slug'`
-    cmdline="$cmdline \"$slug\""
-  fi
-done
+if [ ! -z "$YQ3" ]
+then
+  for f in `find dev-analytics-api/app/services/lf/bootstrap/fixtures/ -type f -iname "*.y*ml"`
+  do
+    disabled=`yq r "$f" 'disabled'`
+    if [ -z "$disabled" ]
+    then
+      slug=`yq r "$f" 'native.slug'`
+      cmdline="$cmdline \"$slug\""
+    fi
+  done
+else
+  for f in `find dev-analytics-api/app/services/lf/bootstrap/fixtures/ -type f -iname "*.y*ml"`
+  do
+    disabled=`yq e '.disabled' "$f"`
+    if [ ! "$disabled" = "true" ]
+    then
+      slug=`yq e '.native.slug' "$f"`
+      cmdline="$cmdline \"$slug\""
+    fi
+  done
+fi
 echo $cmdline
 env | grep API_DB_ENDPOINT
 eval $cmdline
