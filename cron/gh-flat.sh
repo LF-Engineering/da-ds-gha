@@ -75,4 +75,5 @@ else
   done
 fi
 echo $cmdline
-eval $cmdline
+eval $cmdline || exit 16
+echo 'OK'
