@@ -47,4 +47,5 @@ then
   echo "$0: missing AUTH0_DATA env variable, exiting"
   exit 5
 fi
-/usr/bin/da-ds-gha-cron-task.sh da-ds-gha-test test 1>> /tmp/da-ds-gha-test.log 2>>/tmp/da-ds-gha-test.err
+/usr/bin/da-ds-gha-cron-task.sh da-ds-gha-test test 1>> /tmp/da-ds-gha-test.log 2>> /tmp/da-ds-gha-test.err || exit $?
+./cron/gh-flat.sh test 1>> /tmp/gh-flat-test.log 2>> /tmp/gh-flat-test.err
