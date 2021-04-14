@@ -75,5 +75,4 @@ else
   done
 fi
 echo $cmdline
-env | grep API_DB_ENDPOINT
 eval $cmdline
