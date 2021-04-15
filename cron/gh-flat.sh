@@ -35,6 +35,7 @@ cd .. || exit 5
 if [ -d "dev-analytics-metrics" ]
 then
   cd dev-analytics-metrics || exit 6
+  git reset --hard || exit 17
   git pull || exit 7
 else
   git clone "${metrics_repo}" || exit 8
